@@ -6,5 +6,5 @@ ScriptName="$(basename $0)"
 if [ $(/bin/pidof -x ${ScriptName}| /bin/wc -w) -gt 2 ]; then
     exit
 else
-    /usr/bin/python3 /root/statistics.py
+    /usr/bin/python3 /root/server/statistics.py
 fi
