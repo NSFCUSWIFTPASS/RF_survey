@@ -1,6 +1,5 @@
 import os
 import logging
-from datetime import time
 from logging.handlers import TimedRotatingFileHandler
 from syslog import syslog
 

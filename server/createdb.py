@@ -1,6 +1,5 @@
 from configparser import ConfigParser
 import psycopg2
-import json
 
 def config(filename="/home/tschimben/Documents/database.ini", section="postgresql"):
     # create a parser

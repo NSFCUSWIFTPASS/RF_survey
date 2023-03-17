@@ -6,7 +6,6 @@ import os
 import shutil
 import json
 import psycopg2
-import numpy as np
 from configparser import ConfigParser
 from Logger import Logger
 from datetime import datetime
