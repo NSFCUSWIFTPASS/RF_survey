@@ -30,7 +30,7 @@ def main(logger, directory, grace, suffix_meta=".json", suffix_data=".sc16"):
                         visuals.update_db(file)
                         logger.write_log("INFO","Processing of %s finished."%(os.path.splitext(os.path.basename(metadata))[0]))
                         os.remove(path+"/"+data)
-                        os.remove(Path+"/"+metadata)
+                        os.remove(path+"/"+metadata)
     except Exception as e:
         logger.write_log("DEBUG","Aborted: %s"%(repr(e)))
 
