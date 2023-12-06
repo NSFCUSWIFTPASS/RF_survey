@@ -8,6 +8,6 @@
 import os
 from signal import SIGTERM
 
-with open(os.environ["HOME"]+"/sweeps.pid", "r") as f:
+with open(os.environ["HOME"]+"/rf_survey.pid", "r") as f:
     pid = int(f.readline())
 os.kill(pid, SIGTERM)
