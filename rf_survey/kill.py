@@ -12,8 +12,10 @@ from Cronify import Cronify
 with open(os.environ["HOME"]+"/rf_survey.pid", "r") as f:
     pid = int(f.readline())
 os.kill(pid, SIGTERM)
-os.remove(os.environ["HOME"]+"/rf_survey.pid")
-os.remove(os.environ["HOME"]+"/lifesigns.json")
-
+try:
+    os.remove(os.environ["HOME"]+"/rf_survey.pid")
+    os.remove(os.environ["HOME"]+"/lifesigns.json")
+except:
+    print("Lifesigns and pid could not be deleted. Already gone?")
 cronjob = Cronify()
 cronjob.delete_job()
