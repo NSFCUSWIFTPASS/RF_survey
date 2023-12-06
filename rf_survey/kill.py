@@ -7,7 +7,13 @@
 
 import os
 from signal import SIGTERM
+from Cronify import Cronify
 
 with open(os.environ["HOME"]+"/rf_survey.pid", "r") as f:
     pid = int(f.readline())
 os.kill(pid, SIGTERM)
+os.remove(os.environ["HOME"]+"/rf_survey.pid")
+os.remove(os.environ["HOME"]+"/lifesigns.json")
+
+cronjob = Cronify()
+cronjob.delete_job()
