@@ -7,7 +7,6 @@ These surveys can be run from the command in Linux or via the RF Survey GUI. An 
 
 The GUI requires Anaconda to install:
 ```
-wget https://docs.anaconda.com/free/miniconda/
 cd RF_survey
 conda create -n GUI
 conda activate GUI
