@@ -4,6 +4,9 @@
 Welcome to the RF Noise Survey, an open source tool for measuring baseline radio frequency interference. These surveys are designed to be run on a Raspberry Pi 4 connected to an Ettus Research B200mini Universal Software Radio Peripheral (USRP) Software Defined Radio (SDR).
 
 These surveys can be run from the command in Linux or via the RF Survey GUI. An example command line basic survey is:
+'''
+nohup python3 /home/pi/rf_survey/sweeps.py -f1 915000000 -b 26000000 -s 2                                                                                                                                  6000000 -g 35 -r 1 -t 10 -c 0  -o ucb_db_test -gcs 40N105W &
+'''
 
 The GUI can be run on Mac or Linux, not currently supported for Windows:
 ```
