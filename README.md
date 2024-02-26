@@ -5,7 +5,7 @@ Welcome to the RF Noise Survey, an open source tool for measuring baseline radio
 
 These surveys can be run from the command in Linux or via the RF Survey GUI. An example command line basic survey is:
 
-The GUI requires Anaconda to install:
+The GUI can be run on Mac or Linux:
 ```
 cd RF_survey
 conda create -n GUI
