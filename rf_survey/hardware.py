@@ -18,7 +18,7 @@ def main():
     hex_mac = hex(uuid.getnode())
     hardware['rpi_mac'] = (':'.join(['{:02x}'.format((uuid.getnode() >> ele) & 0xff) for ele in range(0,8*6,8)][::-1]))
     try:
-        hardware['rpi_ip'] = (subprocess.check_output('hostname -I', shell=True)).decode('utf-8').strip()
+        hardware['rpi_ip'] = (subprocess.check_output('hostname -I', shell=True)).decode('utf-8').split()[0].strip()
     except Exception as e:
         print("%s"%(repr(e)))
     try:
