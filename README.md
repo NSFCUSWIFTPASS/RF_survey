@@ -1,7 +1,19 @@
 # Radio Frequency (RF) Noise Survey
 
 ## Quick Start Guide
-Welcome to the RF Noise Survey, an open source tool for measuring baseline radio frequency interference.
+Welcome to the RF Noise Survey, an open source tool for measuring baseline radio frequency interference. These surveys are designed to be run on a Raspberry Pi 4 connected to an Ettus Research B200mini Universal Software Radio Peripheral (USRP) Software Defined Radio (SDR).
+
+These surveys can be run from the command in Linux or via the RF Survey GUI. An example command line basic survey is:
+
+The GUI requires Anaconda to install:
+```
+wget https://docs.anaconda.com/free/miniconda/
+cd RF_survey
+conda create -n GUI
+conda activate GUI
+cd GUI
+python rf_survey_gui_v4.4.1.py
+```
 
 ## Introduction
 Developed by the WIRG lab at the University of Colorado Boulder under NSF [SWIFT](https://new.nsf.gov/funding/opportunities/spectrum-wireless-innovation-enabled-future/505858), the RF noise survey measures RF interference in order to better enable active and passive spectrum sharing. As described in this paper published at IEEE Aerospace 2023, ["Testbed for Radio Astronomy Interference Characterization and Spectrum Sharing Research"](https://www.aeroconf.org/cms/content_attachments/75/download), this code has been deployed and tested at the [Hat Creek Radio Observatory](https://www.seti.org/hcro). 
