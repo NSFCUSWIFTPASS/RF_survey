@@ -32,9 +32,9 @@ Figure 1-1 depicts a conceptual overview of the RF Baseline Noise Survey Collect
 The primary methods of measuring RF interference with this survey are through power and spectral kurtosis collected from the Streamer class.
 
 | Code      | High Level Functionality |  |
-| ----------- | ----------- | |
+| ----------- | ----------- | ----- |
 | Survey/Record      |        | |
-|    |         | |
+|    |          | |
 
 ## Modules
 
