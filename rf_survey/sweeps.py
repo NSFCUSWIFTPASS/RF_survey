@@ -56,7 +56,7 @@ class Streamer(object):
             # Get SDR serial number
             self.serial = self.usrp.get_usrp_rx_info(0)['mboard_serial']
         except:
-            logger.write_log("ERROR","USRP is not connected: %s" % (repr(e)))
+            self.logger.write_log("ERROR","USRP is not connected: %s" % (repr(e)))
             return
 
         # Check if external clock present:
