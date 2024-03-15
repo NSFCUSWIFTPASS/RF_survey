@@ -92,7 +92,6 @@ class Streamer(object):
         self.metadata = uhd.types.RXMetadata()
         self.streamer = self.usrp.get_rx_stream(st_args)
         self.buffer = self.streamer.get_max_num_samps()                         # determines buffer size
-        #print(self.buffer)
         self.recv_buffer = np.zeros((1, self.buffer), dtype=np.int32)           # needs to be 2xStreamArgs, e.g sc16 -> np.int32
 
     def start_stream(self):
