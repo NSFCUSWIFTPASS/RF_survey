@@ -98,8 +98,7 @@ class Streamer(object):
 
         # Start Stream in continuous mode
         stream_cmd = uhd.types.StreamCMD(uhd.types.StreamMode.start_cont)
-        stream_cmd.stream_now = True #False #for external clock source
-        #stream_cmd.time_spec = uhd.libpyuhd.types.time_spec(3.0) #3.0 needs to be tested
+        stream_cmd.stream_now = True #set to False if using external clock source
         self.streamer.issue_stream_cmd(stream_cmd)
         self.status['hardware_op_status'] = 2
 
