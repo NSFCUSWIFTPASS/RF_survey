@@ -5,7 +5,7 @@ Welcome to the RF Noise Survey, an open source tool for measuring baseline radio
 
 The code can be downloaded with 
 ```
-pip install rf-survey==0.0.1
+pip install rf-survey==0.1
 ```
 
 These surveys can be run from the command in Linux or via the RF Survey GUI. An example command line basic survey is:
