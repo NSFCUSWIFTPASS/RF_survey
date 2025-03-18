@@ -1,5 +1,15 @@
 # Radio Frequency (RF) Noise Survey
 
+## Overview
+
+The RF Noise Survey is an open source tool developed by the WIRG lab at the University of Colorado Boulder to measure baseline radio frequency (RF) interference. This tool is designed to run on a Raspberry Pi 4 connected to an Ettus Research B200mini USRP (Software Defined Radio). It aids in understanding and improving RF spectrum sharing for both communications and scientific purposes.
+
+> **Key Features:**
+> - **Command Line Surveys:** Run surveys via CLI using Python scripts.
+> - **Graphical Interface:** A GUI is available (in the `GUI/` folder) for Mac and Linux.
+> - **Monitoring:** Tools in the `monitoring/` folder help with system health and logging.
+> - **Data Processing:** Measures power and spectral characteristics to analyze RF interference.
+
 ## Quick Start Guide
 Welcome to the RF Noise Survey, an open source tool for measuring baseline radio frequency interference. These surveys are designed to be run on a Raspberry Pi 4 connected to an Ettus Research B200mini Universal Software Radio Peripheral (USRP) Software Defined Radio (SDR).
 
@@ -31,11 +41,37 @@ Figure 1-1 depicts a conceptual overview of the RF Baseline Noise Survey Collect
 
 The primary methods of measuring RF interference with this survey are through power and spectral kurtosis collected from the Streamer class.
 
-| Code      | High Level Functionality |  |
-| ----------- | ----------- | ----- |
-| Survey/Record      |        | |
-|    |          | |
+## Code Structure
+The repository is divided into several key directories:
+
+rf_survey/: Contains the core Python modules for the RF survey tool.
+GUI/: Contains the graphical user interface script.
+monitoring/: Includes scripts for system monitoring, logging, and alerting.
 
 ## Modules
+| Module              | Description                                                                                                                                                          |
+|---------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `sweeps.py`         | Entry point for command line surveys. Parses arguments, initializes surveys, and orchestrates data collection from the SDR.                                           |
+| `rf_survey.py`      | Main module that integrates various functionalities of the survey. Coordinates data collection, processing, and saving of results.                                   |
+| `Cronify.py`        | Provides scheduling or timing-related functionalities for periodic RF surveys.                                                                                    |
+| `GracefulKiller.py` | Implements signal handling for graceful termination of the survey process, ensuring resources are cleaned up properly on exit.                                      |
+| `Logger.py`         | Contains logging functionality to record events, errors, and informational messages during survey execution.                                                        |
+| `Restoration.py`    | Handles restoration or recovery processes, possibly to reinitialize system settings or recover from interruptions during data collection.                           |
+| `hardware.py`       | Manages interactions with hardware components, including the USRP SDR, and handles low-level configurations and commands.                                           |
+| `kill.py`           | Provides utilities to forcefully stop or manage running processes related to the survey.                                                                            |
+| `wr_boot.py`        | Likely handles initialization or bootstrapping of the survey environment, ensuring all necessary components are correctly configured before starting the survey. |
+| `wr_poll.py`        | Polls hardware or system metrics during survey operation, providing real-time status updates or adjustments as needed.                                                |
 
 ## Methods
+| Method/Function                 | Module             | Description                                                                                                             |
+|---------------------------------|--------------------|-------------------------------------------------------------------------------------------------------------------------|
+| `main()`                        | `sweeps.py`        | Initializes the survey, parses command-line arguments, and starts the RF data collection process.                        |
+| `start_survey()`                | `rf_survey.py`     | Coordinates the overall survey workflow by integrating hardware initialization, data collection, and processing.         |
+| `schedule_cron()`               | `Cronify.py`       | Schedules periodic survey runs or tasks using cron-like functionalities.                                               |
+| `handle_signals()`              | `GracefulKiller.py`| Captures system signals (e.g., SIGINT) to gracefully terminate the survey and perform cleanup.                           |
+| `log_event(message)`            | `Logger.py`        | Logs events and error messages during survey execution.                                                               |
+| `restore_state()`               | `Restoration.py`   | Restores system or survey state after an interruption or unexpected termination.                                        |
+| `configure_hardware()`          | `hardware.py`      | Sets up and configures the SDR hardware for data collection, including frequency and bandwidth settings.                |
+| `terminate_process()`           | `kill.py`          | Terminates running survey processes safely.                                                                            |
+| `initialize_boot()`             | `wr_boot.py`       | Initializes survey parameters and hardware configurations during system startup.                                       |
+| `poll_status()`                 | `wr_poll.py`       | Continuously polls hardware and system status to provide real-time updates and ensure optimal operation.                 |
