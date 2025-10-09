@@ -154,7 +154,6 @@ def main():
         args.delay = 0
 
     group = group_number()
-    start = 0
 
     if args.timer == 0:
         if args.seed != None:
@@ -250,83 +249,49 @@ def main():
     }
 
     if args.cycles == 0:
-        try:
-            while not grace.kill_now:
-                while start_frequency <= args.frequency_end and not grace.kill_now:
-                    logger.write_log(
-                        "INFO", "Frequency step: %s" % (start_frequency / 1e6)
-                    )
-                    # The -r [records] argument determines how many IQ data files of size [samples] * 4 Bytes are created in [timer] intervals
-                    for j in range(int(start), args.records):
-                        if args.timer == 0 and not grace.kill_now:
-                            stream.rand_timer(args.maxtimer)
-                        else:
-                            stream.timer(args.timer)
-
-                        # Starts the collection of IQ data samples
-                        start_time = time.time()
-                        stream.receive_samples(start_frequency)
-                        end_time = time.time()
-                        logger.write_log(
-                            "INFO", "Processing time: %s" % (end_time - start_time)
-                        )
-                        if grace.kill_now:
-                            break
-                    start = 0
-                    start_frequency = start_frequency + args.bandwidth
-                start_frequency = args.frequency_start
-        except TypeError as e:
-            print("An end center frequency needs to be provided\n%s" % (repr(e)))
-            logger.write_log(
-                "DEBUG", "An end center frequency needs to be provided %s" % (repr(e))
-            )
-            cleanup()
-            return
+        while not grace.kill_now:
+            perform_frequency_sweep(stream, logger, grace, args)
     else:
         for i in range(args.cycles):
-            if not grace.kill_now:
-                try:
-                    while start_frequency <= args.frequency_end and not grace.kill_now:
-                        logger.write_log(
-                            "INFO", "Frequency step: %s" % (start_frequency / 1e6)
-                        )
-                        # The -r [records] argument determines how many IQ data files of size [samples] * 4 Bytes are created in [timer] intervals
-                        for j in range(start, args.records):
-                            if not grace.kill_now:
-                                if args.timer == 0:
-                                    stream.rand_timer(args.maxtimer)
-                                else:
-                                    stream.timer(args.timer)
-
-                                # Starts the collection of IQ data samples
-                                start_time = time.time()
-                                stream.receive_samples(start_frequency)
-                                end_time = time.time()
-                                logger.write_log(
-                                    "INFO",
-                                    "Processing time: %s" % (end_time - start_time),
-                                )
-                            else:
-                                break
-                        start = 0
-                        start_frequency = start_frequency + args.bandwidth
-                    start_frequency = args.frequency_start
-                except TypeError as e:
-                    print(
-                        "An end center frequency needs to be provided\n%s" % (repr(e))
-                    )
-                    logger.write_log(
-                        "DEBUG",
-                        "An end center frequency needs to be provided %s" % (repr(e)),
-                    )
-                    cleanup()
-                    return
-            else:
+            if grace.kill_now:
                 break
+            perform_frequency_sweep(stream, logger, grace, args)
 
     # Stops the stream and closes the connection to the SDR
     stream.stop_stream()
     os.remove(os.environ["HOME"] + "/rf_survey.pid")
+
+
+def perform_frequency_sweep(stream, logger, grace, args):
+    """
+    Performs a single sweep across the specified frequency range.
+    """
+    start_frequency = args.frequency_start
+    try:
+        while start_frequency <= args.frequency_end and not grace.kill_now:
+            logger.write_log("INFO", "Frequency step: %s" % (start_frequency / 1e6))
+            # The -r [records] argument determines how many IQ data files are created
+            for _ in range(args.records):
+                if grace.kill_now:
+                    break
+
+                if args.timer == 0:
+                    stream.rand_timer(args.maxtimer)
+                else:
+                    stream.timer(args.timer)
+
+                # Starts the collection of IQ data samples
+                start_time = time.time()
+                stream.receive_samples(start_frequency)
+                end_time = time.time()
+                logger.write_log(
+                    "INFO", "Processing time: %s" % (end_time - start_time)
+                )
+
+            start_frequency = start_frequency + args.bandwidth
+    except TypeError:
+        logger.write_log("DEBUG", "An end center frequency needs to be provided.")
+        raise
 
 
 if __name__ == "__main__":
