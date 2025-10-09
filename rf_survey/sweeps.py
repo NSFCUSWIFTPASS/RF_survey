@@ -16,7 +16,6 @@ from Streamer import Streamer
 from Logger import Logger
 from GracefulKiller import GracefulKiller
 from Cronify import Cronify
-from Restoration import Restoration
 
 #####################################################
 # The streamer class contains all functions related #
@@ -58,8 +57,6 @@ def sleep(seconds, grace):
 def cleanup():
     if os.path.exists(os.environ["HOME"] + "/rf_survey.pid"):
         os.remove(os.environ["HOME"] + "/rf_survey.pid")
-    if os.path.exists(os.environ["HOME"] + "/lifesigns.json"):
-        os.remove(os.environ["HOME"] + "/lifesigns.json")
     cronjob = Cronify()
     cronjob.delete_job()
 
@@ -74,7 +71,6 @@ def main():
     logger.write_log("DEBUG", "PID: %s" % (os.getpid()))
     if os.path.exists("/home/pi/nohup.out"):
         os.remove("/home/pi/nohup.out")
-    cpr = Restoration()
 
     # Parser to parse the parameter inputs
     parser = argparse.ArgumentParser()
@@ -234,30 +230,8 @@ def main():
     stream.setup_stream()
     stream.start_stream()
 
-    logger.write_log("INFO", "Checking Pulse.")
-    pulse = cpr.check_pulse()
     # comment out for now, review methods for restart on pi reboot
     # cronjob = Cronify()
-
-    if pulse == 1:
-        start_frequency, args.cycles, group, start, start_time = cpr.cardioversion()
-        logger.write_log(
-            "INFO",
-            "Pulse found: restoration frequency = {}, cycles left = {}, original start time was {}.".format(
-                start_frequency, args.cycles, start_time
-            ),
-        )
-    elif pulse == 2:
-        logger.write_log(
-            "WARNING",
-            "Survey has already ended. Shutting down and removing lifesign and cron job.",
-        )
-        os.remove(os.environ["HOME"] + "/lifesigns.json")
-        os.remove(os.environ["HOME"] + "/rf_survey.pid")
-        cronjob.delete_job()
-        sys.exit()
-    else:
-        logger.write_log("INFO", "No Pulse, moving on.")
 
     configs = {
         "organization": args.organization,
@@ -274,50 +248,6 @@ def main():
         "start_time": str(datetime.now()),
         "delay": args.delay,
     }
-
-    if pulse == 1:
-        configs["start_time"] = start_time
-        actual_start = datetime.strptime(
-            start_time, "%Y-%m-%d %H:%M:%S.%f"
-        ) + relativedelta(seconds=+args.delay)
-        logger.write_log(
-            "INFO", "Approximate scheduled start time was: {}.".format(actual_start)
-        )
-        if actual_start > datetime.now():
-            new_delay = (actual_start - datetime.now()).total_seconds()
-            logger.write_log("INFO", "Remaining delay: {}.".format(new_delay))
-            sleep(new_delay, grace)
-    else:
-        try:
-            with open(os.environ["HOME"] + "/lifesigns.json", "w") as outfile:
-                json.dump(configs, outfile)
-            cronjob.create_job(configs)
-            logger.write_log("WARNING", "Restoration File and Cronjob created.")
-            logger.write_log(
-                "INFO",
-                "Restoration File created with Start Time: {}, Delay: {}, Start Frequency: {}, End Frequency: {}, Sampling Rate: {}, Interval: {}, Samples: {}, Cycles: {}, Recordings: {}, Gain: {}, Group: {}, Organization: {}, Coordinates: {}".format(
-                    configs["start_time"],
-                    configs["delay"],
-                    configs["start_frequency"],
-                    configs["end_frequency"],
-                    configs["sampling_rate"],
-                    configs["interval"],
-                    configs["samples"],
-                    configs["cycles"],
-                    configs["recordings"],
-                    configs["gain"],
-                    configs["group"],
-                    configs["organization"],
-                    configs["gcs"],
-                ),
-            )
-        except Exception as e:
-            logger.write_log(
-                "ERROR",
-                "Creating Restoration File and Cronjob failed with: %s." % (repr(e)),
-            )
-        if args.delay != 0:
-            sleep(args.delay, grace)
 
     if args.cycles == 0:
         try:
@@ -397,19 +327,6 @@ def main():
     # Stops the stream and closes the connection to the SDR
     stream.stop_stream()
     os.remove(os.environ["HOME"] + "/rf_survey.pid")
-
-    """the if clause below is only for testing"""
-
-    # if not grace.kill_now:
-    try:
-        cronjob.delete_job()
-        os.remove(os.environ["HOME"] + "/lifesigns.json")
-        logger.write_log("WARNING", "Restoration File and Cronjob deleted.")
-    except Exception as e:
-        logger.write_log(
-            "ERROR",
-            "Deleting Restoration File and Cronjob failed with: %s." % (repr(e)),
-        )
 
 
 if __name__ == "__main__":
