@@ -2,20 +2,20 @@
 # This work is licensed under the Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International License.
 # To view a copy of this license, visit http://creativecommons.org/licenses/by-nc-sa/4.0/ or send a letter to Creative Commons, PO Box 1866, Mountain View, CA 94042, USA.
 
-import numpy as np
 import time
 import os
-import subprocess
 import argparse
 import sys
 import random
-import json
 from datetime import datetime
-from dateutil.relativedelta import relativedelta
-from Streamer import Streamer
+import socket
+
+from MockStreamer import Streamer
 from Logger import Logger
 from GracefulKiller import GracefulKiller
-from Cronify import Cronify
+# from Cronify import Cronify
+
+from config import parse_args
 
 #####################################################
 # The streamer class contains all functions related #
@@ -31,14 +31,6 @@ def group_number(length=6):
         random_integer = random_integer - 32 if flip_bit == 1 else random_integer
         group += chr(random_integer)
     return group
-
-
-def gain_check(g):
-    num = int(g)
-
-    if num < 0 or num > 76:
-        raise argparse.ArgumentTypeError("Valid gain values range from 0 to 76")
-    return num
 
 
 def sleep(seconds, grace):
@@ -61,156 +53,23 @@ def cleanup():
     cronjob.delete_job()
 
 
-def main():
+def run():
     log_time = datetime.now().strftime("%Y-%m-%d")
     log_path = os.environ["HOME"] + "/logs/"
     logger = Logger("rf_survey", log_path, "stream-" + log_time + ".log")
     grace = GracefulKiller()
+
     with open(os.environ["HOME"] + "/rf_survey.pid", "w") as f:
         f.write(str(os.getpid()))
     logger.write_log("DEBUG", "PID: %s" % (os.getpid()))
     if os.path.exists("/home/pi/nohup.out"):
         os.remove("/home/pi/nohup.out")
 
-    # Parser to parse the parameter inputs
-    parser = argparse.ArgumentParser()
-    required = parser.add_argument_group("required named arguments")
-    required.add_argument(
-        "-f1",
-        "--frequency_start",
-        type=lambda x: int(float(x)),
-        help="Start Center Frequency in e6 Hz",
-        required=True,
-    )
-    parser.add_argument(
-        "-f2",
-        "--frequency_end",
-        type=lambda x: int(float(x)),
-        help="End Center Frequency in e6 Hz",
-    )
-
-    required.add_argument(
-        "-b",
-        "--bandwidth",
-        type=lambda x: int(float(x)),
-        help="Bandwidth in e6 Hz",
-        required=True,
-    )
-    required.add_argument(
-        "-s",
-        "--samples",
-        type=lambda x: int(float(x)),
-        help="Total number of sample",
-        required=True,
-    )
-    required.add_argument(
-        "-g", "--gain", type=gain_check, help="Receive gain in dB (0-76)", required=True
-    )
-    required.add_argument(
-        "-r",
-        "--records",
-        type=int,
-        help="# of files generated per frequency",
-        required=True,
-    )
-    required.add_argument(
-        "-o", "--organization", type=str, help="Location Identifier", required=True
-    )
-    required.add_argument(
-        "-gcs",
-        "--coordinates",
-        type=str,
-        help="Coordinates in 40.0149N105.2705W format",
-        required=True,
-    )
-    parser.add_argument(
-        "-c", "--cycles", type=int, help="# of times all frequencies are swept"
-    )
-    required.add_argument(
-        "-t",
-        "--timer",
-        type=float,
-        help="time interval in seconds - min = BW/1e6*0.2",
-        required=True,
-    )
-    parser.add_argument(
-        "-m",
-        "--maxtimer",
-        type=int,
-        help="max random time interval in seconds - min = BW/1e6*0.2",
-    )
-    parser.add_argument(
-        "-d", "--delay", type=float, help="execute the script [x] seconds in the future"
-    )
-    parser.add_argument(
-        "-rs",
-        "--seed",
-        type=int,
-        help="only used when activating multiple devices through the GUI",
-    )
-    args = parser.parse_args()
-
-    if args.delay == None:
-        args.delay = 0
-
     group = group_number()
-
-    if args.timer == 0:
-        if args.seed != None:
-            random.seed(args.seed)
-        if args.maxtimer < args.bandwidth / 1e6 * 0.2:
-            logger.write_log("DEBUG", "Time interval needs to be at least BW/1e6*0.2")
-            parser.error("Time interval needs to be at least BW/1e6*0.2")
-            cleanup()
-            return  # if a max random timer interval is not given, the default is set to 60 seconds
-        if args.maxtimer == None:
-            logger.write_log("DEBUG", "-m is required when -t is set to 0")
-            parser.error("-m is required when -t is set to 0")
-            cleanup()
-            return
-    if args.cycles == None:
-        args.cycles = 1
+    args = parse_args()
 
     length = args.samples / args.bandwidth
-    start_frequency = args.frequency_start
-    if not args.frequency_end:
-        args.frequency_end = start_frequency
-
-    hostname = str(subprocess.check_output(["hostname"]))[2:-3]
-
-    dict = {}
-    # If the provided gain value is 0, determines the optimal gain value
-    if args.gain == 0:
-        if not grace.kill_now:
-            stream = Streamer(
-                args.samples,
-                args.frequency_start,
-                args.bandwidth,
-                args.gain,
-                args.timer,
-                length,
-                hostname,
-                args.organization,
-                args.coordinates,
-            )
-            stream.setup_stream()
-            stream.start_stream()
-
-            # This value needs to be changed for different USRPs - B200 series has a gain range from 0-76
-            levels = np.arange(76, -1, -1)
-
-            for i in range(len(levels)):
-                if not grace.kill_now:
-                    dict[levels[i]] = stream.receive_gain(levels[i])
-                    # This value needs to be adjusted with different CPU format settings - for sc16 15000 uses only 14 of the available 15 bits
-                    if (dict[levels[i]][0] < 15000 and dict[levels[i]][1] < 15000) and (
-                        dict[levels[i]][2] == 0 and dict[levels[i]][3] == 0
-                    ):
-                        args.gain = levels[i]
-                        print(args.gain)
-                        stream.stop_stream()
-                        break
-                    time.sleep(10)
+    hostname = socket.gethostname()
 
     # Starts the data collection streamer (not the data collection itself)
     stream = Streamer(
@@ -232,27 +91,28 @@ def main():
     # comment out for now, review methods for restart on pi reboot
     # cronjob = Cronify()
 
-    configs = {
-        "organization": args.organization,
-        "gcs": args.coordinates,
-        "start_frequency": args.frequency_start,
-        "end_frequency": args.frequency_end,
-        "sampling_rate": args.bandwidth,
-        "interval": int(args.timer),
-        "samples": args.samples,
-        "cycles": args.cycles,
-        "recordings": args.records,
-        "gain": args.gain,
-        "group": group,
-        "start_time": str(datetime.now()),
-        "delay": args.delay,
-    }
+    # THIS WILL BE THE METADATA
+    # configs = {
+    #    "organization": args.organization,
+    #    "gcs": args.coordinates,
+    #    "start_frequency": args.frequency_start,
+    #    "end_frequency": args.frequency_end,
+    #    "sampling_rate": args.bandwidth,
+    #    "interval": int(args.timer),
+    #    "samples": args.samples,
+    #    "cycles": args.cycles,
+    #    "recordings": args.records,
+    #    "gain": args.gain,
+    #    "group": group,
+    #    "start_time": str(datetime.now()),
+    #    "delay": args.delay,
+    # }
 
     if args.cycles == 0:
         while not grace.kill_now:
             perform_frequency_sweep(stream, logger, grace, args)
     else:
-        for i in range(args.cycles):
+        for _ in range(args.cycles):
             if grace.kill_now:
                 break
             perform_frequency_sweep(stream, logger, grace, args)
@@ -294,11 +154,15 @@ def perform_frequency_sweep(stream, logger, grace, args):
         raise
 
 
-if __name__ == "__main__":
+def main():
     pid_path = os.environ["HOME"] + "/rf_survey.pid"
     if os.path.exists(pid_path):
         with open(os.environ["HOME"] + "/rf_survey.pid", "r") as f:
             pid = f.readlines()
         if os.path.exists("/proc/" + pid[0]):
             sys.exit("Survey already running! Interrupt running survey first.")
+    run()
+
+
+if __name__ == "__main__":
     main()
