@@ -130,14 +130,6 @@ class Streamer(object):
     def receive_samples(self, frequency):
         # Receives samples from the SDR
 
-        # Generate White Rabbit status updates
-        if os.path.exists(os.environ["HOME"] + "/wr_poll.py"):
-            process = subprocess.Popen(
-                "python2 /home/pi/wr_poll.py", shell=True, stdout=DEVNULL
-            )
-        else:
-            self.logger.write_log("DEBUG", "No WR-LEN present.")
-
         # New buffer
         self.recv_buffer = np.zeros((1, self.buffer), dtype=np.int32)
 
@@ -228,43 +220,6 @@ class Streamer(object):
             / 60
         )
         self.status["rpi_op_status"] = 1
-        try:
-            with open("/home/pi/wr_dynamic.json", "r") as f:
-                wr = json.load(f)
-
-            self.status["wr_temp"] = wr["temp"]
-            self.status["wr0_rx"] = wr["wr0_rx"]
-            self.status["wr0_tx"] = wr["wr0_tx"]
-            self.status["wr1_rx"] = wr["wr1_rx"]
-            self.status["wr1_tx"] = wr["wr1_tx"]
-            self.status["wr0_lnk"] = str(wr["wr0_lnk"])
-            self.status["wr1_lnk"] = str(wr["wr1_lnk"])
-            self.status["wr0_setp"] = wr["wr0_setp"]
-            self.status["wr0_cko"] = wr["wr0_cko"]
-            self.status["wr0_mu"] = wr["wr0_mu"]
-            self.status["wr0_crtt"] = wr["wr0_crtt"]
-            self.status["wr0_ucnt"] = wr["wr0_ucnt"]
-            self.status["wr0_ss"] = wr["wr0_ss"].replace("'", "")
-            self.status["serial"] = wr["serial"]
-            self.status["wr_host"] = wr["wr_host"]
-            self.status["wr_op_status"] = wr["wr_op_status"]
-        except:
-            self.status["wr_temp"] = None
-            self.status["wr0_rx"] = None
-            self.status["wr0_tx"] = None
-            self.status["wr1_rx"] = None
-            self.status["wr1_tx"] = None
-            self.status["wr0_lnk"] = None
-            self.status["wr1_lnk"] = None
-            self.status["wr0_setp"] = None
-            self.status["wr0_cko"] = None
-            self.status["wr0_mu"] = None
-            self.status["wr0_crtt"] = None
-            self.status["wr0_ucnt"] = None
-            self.status["wr0_ss"] = None
-            self.status["serial"] = ""
-            self.status["wr_host"] = ""
-            self.status["wr_op_status"] = 0
 
         with open(
             str(
