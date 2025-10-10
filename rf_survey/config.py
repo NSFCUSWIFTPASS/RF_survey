@@ -89,7 +89,17 @@ def parse_args():
         help="Time interval in seconds - min = BW/1e6*0.2",
     )
     parser.add_argument(
-        "-m", "--maxtimer", type=int, help="Max random time interval in seconds"
+        "-j",
+        "--jitter",
+        nargs="?",
+        const=0.1,
+        default=0.0,
+        type=float,
+        help=(
+            "Enable jitter. If the flag is present without a value, a default max "
+            "jitter of 0.1s is used. Optionally, provide a value for a different "
+            "max jitter (e.g., -j 0.5)."
+        ),
     )
     parser.add_argument(
         "-d",
@@ -112,13 +122,5 @@ def parse_args():
 
     if args.frequency_end < args.frequency_start:
         parser.error("frequency_end must be greater than or equal to frequency_start.")
-
-    if args.timer == 0:
-        if args.maxtimer is None:
-            parser.error("-m/--maxtimer is required when -t/--timer is set to 0.")
-
-        min_maxtimer = args.bandwidth / 1e6 * 0.2
-        if args.maxtimer < min_maxtimer:
-            parser.error(f"maxtimer must be at least {min_maxtimer} (BW/1e6*0.2).")
 
     return args

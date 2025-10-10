@@ -17,6 +17,9 @@ import subprocess
 from subprocess import DEVNULL
 import sys
 import uuid
+
+
+from utils.scheduler import calculate_wait_time
 from Logger import Logger
 
 
@@ -28,6 +31,7 @@ class Streamer(object):
         sample_rate,
         gain,
         interval,
+        jitter,
         length,
         hostname,
         organization,
@@ -42,6 +46,9 @@ class Streamer(object):
         self.path = "/mnt/net-sync/"  # "/mnt/net-sync/" #"/home/pi/sync/"          # path where IQ data will be stored
         self.dict = {}
         self.margin = 0.2 / float(length)
+
+        self.interval = interval
+        self.jitter = jitter
 
         # get the host's hostname
         self.num_samps = num_samps
@@ -321,52 +328,22 @@ class Streamer(object):
             json.dump(self.status, outfile)
         # os.chmod(str(self.path+self.serial+"-"+self.hostname+"-"+self.timestamp+"-status.json"), 0o777)
 
-    def timer(self, seconds):
-        # Timer for regular intervals - calculates time to next interval and increments time
-        t = datetime.today()
-        if int(math.floor(seconds)) >= 1:
-            seconds = int(seconds)
-            next_interval = (t.second // seconds + 1) * seconds
-            if next_interval >= 60:
-                next_second = (
-                    ((t.minute * 60 + t.second) // next_interval + 1)
-                    * next_interval
-                    % 60
-                )
-                minutes = next_interval // 60
-                next_minute = abs(t.minute - ((t.minute // minutes + 1) * minutes))
-                future = datetime(
-                    t.year, t.month, t.day, t.hour, t.minute, next_second, 0
-                ) + relativedelta(minutes=+next_minute)
-            else:
-                next_second = next_interval
-                future = datetime(
-                    t.year, t.month, t.day, t.hour, t.minute, next_second, 0
-                )
-        else:
-            microsecond = int(seconds * 1000000)
-            print(t.microsecond)
-            next_microsecond = (t.microsecond // microsecond + 1) * microsecond
-            if next_microsecond >= 1000000:
-                next_microsecond = next_microsecond - 1000000
-                future = datetime(
-                    t.year, t.month, t.day, t.hour, t.minute, t.second, next_microsecond
-                ) + relativedelta(seconds=+1)
-            else:
-                future = datetime(
-                    t.year, t.month, t.day, t.hour, t.minute, t.second, next_microsecond
-                )
-        self.logger.write_log("INFO", "Wait time: %s" % ((future - t).total_seconds()))
-        time.sleep((future - datetime.today()).total_seconds())
+    def wait_for_next_collection(self):
+        """
+        Pauses execution until the next scheduled interval, plus a
+        configurable random jitter.
+        """
+        jitter_duration = 0.0
+        if self.jitter > 0:
+            jitter_duration = random.uniform(0, self.jitter)
 
-    def rand_timer(self, maxtimer):
-        # Random timer with lower and upper bounds
-        maxtime = maxtimer
-        mintime = np.ceil(self.bandwidth / 1e6 * 0.2)
-        if maxtime <= mintime:
-            raise ValueError()
-        t = datetime.today()
-        interval = random.randint(mintime, maxtime)
-        future = t + relativedelta(seconds=interval)
-        self.logger.write_log("INFO", "Wait time: %s" % ((future - t).total_seconds()))
-        time.sleep((future - t).total_seconds())
+        base_wait_duration = calculate_wait_time(self.interval)
+        total_wait_duration = base_wait_duration + jitter_duration
+
+        time.sleep(total_wait_duration)
+
+        self.logger.write_log(
+            "INFO",
+            f"Waiting for {total_wait_duration:.4f} seconds "
+            f"(base: {base_wait_duration:.4f} + jitter: {jitter_duration:.4f})...",
+        )

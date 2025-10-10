@@ -78,6 +78,7 @@ def run():
         args.bandwidth,
         args.gain,
         args.timer,
+        args.jitter,
         length,
         hostname,
         args.organization,
@@ -135,10 +136,7 @@ def perform_frequency_sweep(stream, logger, grace, args):
                 if grace.kill_now:
                     break
 
-                if args.timer == 0:
-                    stream.rand_timer(args.maxtimer)
-                else:
-                    stream.timer(args.timer)
+                stream.wait_for_next_collection()
 
                 # Starts the collection of IQ data samples
                 start_time = time.time()
