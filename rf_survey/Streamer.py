@@ -146,6 +146,7 @@ class Streamer(object):
         for i in range(self.inc_samps // self.buffer):
             self.streamer.recv(self.recv_buffer, self.metadata)
             self.samples[i * self.buffer : (i + 1) * self.buffer] = self.recv_buffer[0]
+
         # Store the samples and metadata file
         self.samples[int(self.margin * self.num_samps) :].tofile(
             str(
@@ -158,83 +159,12 @@ class Streamer(object):
                 + ".sc16"
             )
         )
-        # os.chmod(str(self.path+self.serial+"-"+self.hostname+"-"+self.timestamp+".sc16"), 0o777)
 
-        # Get SDR temperature and RSSI
-        self.md["temperature (C)"] = float(
-            str(self.usrp.get_rx_sensor("temp", 0))[6:-2]
-        )
-        self.md["rssi (dB)"] = float(str(self.usrp.get_rx_sensor("rssi", 0))[6:-2])
-        with open(
-            str(
-                self.path
-                + self.serial
-                + "-"
-                + self.hostname
-                + "-"
-                + self.timestamp
-                + ".json"
-            ),
-            "w",
-        ) as outfile:
-            json.dump(self.md, outfile)
-        # os.chmod(str(self.path+self.serial+"-"+self.hostname+"-"+self.timestamp+".json"), 0o777)
         self.logger.write_log(
             "INFO",
             "File stored as %s."
             % (self.serial + "-" + self.hostname + "-" + self.timestamp),
         )
-
-        # Collect and store status information
-        self.status["bytes_recorded"] = len(
-            self.samples[int(self.margin * self.num_samps) :]
-        )
-        try:
-            self.status["sdr_temp"] = float(
-                str(self.usrp.get_rx_sensor("temp", 0))[6:-2]
-            )
-            self.status["sdr_op_status"] = 1
-        except Exception as e:
-            self.logger.write_log(
-                "CRITICAL", "Failed to connect to sdr with: %s" % (repr(e))
-            )
-            self.status["sdr_temp"] = None
-            self.status["sdr_op_status"] = 1
-        self.status["rpi_cpu_temp"] = CPUTemperature().temperature
-        self.status["avg_cpu_usage"] = os.getloadavg()[2] / os.cpu_count() * 100
-        self.status["rem_rpi_storage_cap"] = int(
-            str(
-                subprocess.check_output(
-                    "df | grep -i 'root' | awk '{print $2}'", shell=True
-                )
-            )[2:-3]
-        )
-        self.status["rpi_uptime(minutes)"] = int(
-            float(
-                str(
-                    subprocess.check_output(
-                        "echo $(awk '{print $1}' /proc/uptime)", shell=True
-                    )
-                )[2:-3]
-            )
-            / 60
-        )
-        self.status["rpi_op_status"] = 1
-
-        with open(
-            str(
-                self.path
-                + self.serial
-                + "-"
-                + self.hostname
-                + "-"
-                + self.timestamp
-                + "-status.json"
-            ),
-            "w",
-        ) as outfile:
-            json.dump(self.status, outfile)
-        # os.chmod(str(self.path+self.serial+"-"+self.hostname+"-"+self.timestamp+"-status.json"), 0o777)
 
         # Clear buffer
         self.recv_buffer = None
@@ -265,23 +195,6 @@ class Streamer(object):
         if self.gain_setting == 0:
             with open("values.pickle", "wb") as outfile:
                 pickle.dump(self.dict, outfile)
-
-        self.status["hardware_op_status"] = 1
-
-        with open(
-            str(
-                self.path
-                + self.serial
-                + "-"
-                + self.hostname
-                + "-"
-                + self.timestamp
-                + "-status.json"
-            ),
-            "w+",
-        ) as outfile:
-            json.dump(self.status, outfile)
-        # os.chmod(str(self.path+self.serial+"-"+self.hostname+"-"+self.timestamp+"-status.json"), 0o777)
 
     def wait_for_next_collection(self):
         """
