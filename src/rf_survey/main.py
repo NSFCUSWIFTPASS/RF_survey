@@ -10,9 +10,9 @@ import random
 from datetime import datetime
 import socket
 
-from MockStreamer import Streamer
-from Logger import Logger
-from GracefulKiller import GracefulKiller
+from rf_survey.mock_streamer import Streamer
+from rf_survey.utils.logger import Logger
+from rf_survey.graceful_killer import GracefulKiller
 # from Cronify import Cronify
 
 from config import parse_args

@@ -6,21 +6,12 @@ import uhd
 import numpy as np
 import os
 import time
-import math
-from dateutil.relativedelta import relativedelta
 from datetime import datetime
 import random
-import json
-import pickle
-from gpiozero import CPUTemperature
-import subprocess
-from subprocess import DEVNULL
-import sys
-import uuid
 
 
 from utils.scheduler import calculate_wait_time
-from Logger import Logger
+from utils.logger import Logger
 
 
 class Streamer(object):

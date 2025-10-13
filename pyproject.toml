@@ -1,0 +1,49 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "rf-survey"
+dynamic = ["version"]
+description = "Collects baseline measurements of ambient radio frequency (RF) interference using field sensors."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "numpy==2.3.3",
+    "nats-py==2.11.0",
+    "rf-survey-shared @ git+https://github.com/NSFCUSWIFTPASS/rf-survey-shared.git@v0.1.0",
+]
+
+[project.urls]
+Source = "https://github.com/NSFCUSWIFTPASS/RF_survey"
+
+[project.scripts]
+rf-survey = "rf_survey.main:main"
+
+[tool.hatch.metadata]
+allow-direct-references = true
+
+[tool.hatch.version]
+path = "src/rf_survey/__about__.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/rf_survey"]
+
+[tool.hatch.envs.default]
+python = "3.11"
+
+[tool.hatch.envs.test]
+dependencies = [
+  "pytest",
+]
+
+[tool.hatch.envs.test.scripts]
+run = "pytest {args:tests}"
+
+[[tool.hatch.envs.test.matrix]]
+python = ["3.11", "3.12"]
+
+[tool.hatch.envs.ci]
+template = "test"
+# Use built package not source code
+dev-mode = false
