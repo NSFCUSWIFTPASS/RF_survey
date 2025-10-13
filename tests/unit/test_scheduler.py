@@ -1,6 +1,6 @@
 import pytest
 from datetime import datetime
-from utils.scheduler import calculate_wait_time
+from rf_survey.utils.scheduler import calculate_wait_time
 
 # A fixed timestamp for our tests to use as "now"
 BASE_TIME = datetime(2023, 10, 27, 12, 30, 13, 123456)
