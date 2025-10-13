@@ -36,8 +36,7 @@ class Streamer:
         self.logger = Logger("streamer", log_path, "stream-" + log_time + ".log")
 
         self.hostname = hostname
-        self.path = "/mnt/net-sync/"  # "/mnt/net-sync/" #"/home/pi/sync/"          # path where IQ data will be stored
-        self.dict = {}
+        self.path = "/mnt/net-sync/"
         self.margin = 0.2 / float(length)
 
         self.interval = interval
@@ -85,7 +84,7 @@ class Streamer:
         self.md["serial"] = self.serial
         self.md["organization"] = organization
         self.md["gcs"] = coordinates
-        self.md["interval"] = int(interval)
+        self.md["interval"] = interval
         self.md["length"] = length
         self.md["gain"] = gain
         self.md["sampling_rate"] = sample_rate
@@ -121,7 +120,6 @@ class Streamer:
 
         # Set frequency for current loop step
         self.usrp.set_rx_freq(uhd.libpyuhd.types.tune_request(frequency), 0)
-        self.md["frequency"] = frequency
 
         # Generate timestamp for the filename
         now = datetime.now()
