@@ -19,7 +19,7 @@ from utils.logger import Logger
 class Streamer:
     def __init__(
         self,
-        num_samps: int,
+        num_samples: int,
         center_freq_start: int,
         sample_rate: int,
         gain: int,
@@ -42,9 +42,9 @@ class Streamer:
         self.interval = interval
         self.jitter = jitter
 
-        self.num_samps = num_samps
+        self.num_samples = num_samples
         self.inc_samps = int(
-            self.num_samps * (1 + self.margin)
+            self.num_samples * (1 + self.margin)
         )  # number of samples received
         self.samples = np.zeros(self.inc_samps, dtype=np.int32)
         self.bandwidth = sample_rate  # bandwidth and sampling rate are always equal
@@ -131,7 +131,7 @@ class Streamer:
             self.samples[i * self.buffer : (i + 1) * self.buffer] = self.recv_buffer[0]
 
         # Store the samples and metadata file
-        self.samples[int(self.margin * self.num_samps) :].tofile(
+        self.samples[int(self.margin * self.num_samples) :].tofile(
             str(
                 self.path
                 + self.serial
@@ -156,7 +156,7 @@ class Streamer:
         # used to select an optimal gain setting
         self.usrp.set_rx_gain(gain, 0)
         print(gain)
-        for i in range(self.num_samps // self.buffer):
+        for i in range(self.num_samples // self.buffer):
             self.streamer.recv(self.recv_buffer, self.rx_metadata)
             self.samples[i * self.buffer : (i + 1) * self.buffer] = self.recv_buffer[0]
 
