@@ -192,9 +192,6 @@ class Streamer(object):
         # Closes the data stream
         stream_cmd = uhd.types.StreamCMD(uhd.types.StreamMode.stop_cont)
         self.streamer.issue_stream_cmd(stream_cmd)
-        if self.gain_setting == 0:
-            with open("values.pickle", "wb") as outfile:
-                pickle.dump(self.dict, outfile)
 
     def wait_for_next_collection(self):
         """
