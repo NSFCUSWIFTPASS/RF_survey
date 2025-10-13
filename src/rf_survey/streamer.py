@@ -8,26 +8,28 @@ import os
 import time
 from datetime import datetime
 import random
+from pathlib import Path
+from rf_shared.models import MetadataRecord
 
 
 from utils.scheduler import calculate_wait_time
 from utils.logger import Logger
 
 
-class Streamer(object):
+class Streamer:
     def __init__(
         self,
-        num_samps,
-        center_freq_start,
-        sample_rate,
-        gain,
-        interval,
-        jitter,
-        length,
-        hostname,
-        organization,
-        coordinates,
-        group,
+        num_samps: int,
+        center_freq_start: int,
+        sample_rate: int,
+        gain: int,
+        interval: int,
+        jitter: float,
+        length: float,
+        hostname: str,
+        organization: str,
+        coordinates: str,
+        group: str,
     ):
         log_time = datetime.now().strftime("%Y-%m-%d")
         log_path = os.environ["HOME"] + "/logs/"
@@ -41,7 +43,6 @@ class Streamer(object):
         self.interval = interval
         self.jitter = jitter
 
-        # get the host's hostname
         self.num_samps = num_samps
         self.inc_samps = int(
             self.num_samps * (1 + self.margin)
@@ -78,23 +79,18 @@ class Streamer(object):
             self.usrp.set_clock_source("external")
             self.usrp.set_time_source("external")
 
-        # Dictionary to create the metadata file containing essential information
+        # Dictionary to create the metadata records
         self.md = {}
         self.md["hostname"] = self.hostname
         self.md["serial"] = self.serial
         self.md["organization"] = organization
         self.md["gcs"] = coordinates
-        self.md["frequency"] = center_freq_start
         self.md["interval"] = int(interval)
         self.md["length"] = length
         self.md["gain"] = gain
         self.md["sampling_rate"] = sample_rate
         self.md["bit_depth"] = 16
         self.md["group"] = group
-        # self.md['average'] = 0
-        # self.md['flag'] = 1
-        self.status = {}
-        self.status["hostname"] = self.hostname  # change to 32 for fc32
 
     def setup_stream(self):
         # Set up the stream and receive buffer
@@ -102,7 +98,7 @@ class Streamer(object):
         # StreamArgs determine CPU and OTW data rates - sc16 = 16 bit signed integer
         st_args = uhd.usrp.StreamArgs("sc16", "sc16")
         st_args.channels = [0]
-        self.metadata = uhd.types.RXMetadata()
+        self.rx_metadata = uhd.types.RXMetadata()
         self.streamer = self.usrp.get_rx_stream(st_args)
         self.buffer = self.streamer.get_max_num_samps()  # determines buffer size
         # print(self.buffer)
@@ -116,7 +112,6 @@ class Streamer(object):
         stream_cmd.stream_now = True  # False #for external clock source
         # stream_cmd.time_spec = uhd.libpyuhd.types.time_spec(3.0) #3.0 needs to be tested
         self.streamer.issue_stream_cmd(stream_cmd)
-        self.status["hardware_op_status"] = 2
 
     def receive_samples(self, frequency):
         # Receives samples from the SDR
@@ -131,11 +126,10 @@ class Streamer(object):
         # Generate timestamp for the filename
         now = datetime.now()
         self.timestamp = now.strftime("D%Y%m%dT%H%M%SM%f")
-        self.status["time"] = time.strftime("%Y-%m-%d %H:%M:%S %z")
 
         # Receive the predetermined output of samples in groups of buffer size
         for i in range(self.inc_samps // self.buffer):
-            self.streamer.recv(self.recv_buffer, self.metadata)
+            self.streamer.recv(self.recv_buffer, self.rx_metadata)
             self.samples[i * self.buffer : (i + 1) * self.buffer] = self.recv_buffer[0]
 
         # Store the samples and metadata file
@@ -165,7 +159,7 @@ class Streamer(object):
         self.usrp.set_rx_gain(gain, 0)
         print(gain)
         for i in range(self.num_samps // self.buffer):
-            self.streamer.recv(self.recv_buffer, self.metadata)
+            self.streamer.recv(self.recv_buffer, self.rx_metadata)
             self.samples[i * self.buffer : (i + 1) * self.buffer] = self.recv_buffer[0]
 
         data = self.samples.view(np.int16)
@@ -203,3 +197,19 @@ class Streamer(object):
             f"Waiting for {total_wait_duration:.4f} seconds "
             f"(base: {base_wait_duration:.4f} + jitter: {jitter_duration:.4f})...",
         )
+
+    def _build_metadata_record(
+        self, frequency: int, collection_time: datetime, file_path: Path
+    ) -> MetadataRecord:
+        """
+        Factory method to assemble a MetadataRecord from the streamer's static
+        configuration and the dynamic data from a single collection.
+        """
+        data = self.md.copy()
+
+        data["frequency"] = frequency
+        data["timestamp"] = collection_time
+        data["source_sc16_path"] = file_path
+
+        # Use dictionary unpacking to cleanly create the dataclass instance
+        return MetadataRecord(**data)
