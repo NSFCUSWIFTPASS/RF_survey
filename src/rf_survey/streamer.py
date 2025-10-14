@@ -4,73 +4,87 @@
 
 import uhd
 import numpy as np
-import os
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 import random
 from pathlib import Path
 from rf_shared.models import MetadataRecord
 
 
-from utils.scheduler import calculate_wait_time
-from utils.logger import Logger
+from rf_survey.utils.scheduler import calculate_wait_time
+from rf_survey.utils.logger import Logger
 
 
 class Streamer:
     def __init__(
         self,
         num_samples: int,
-        center_freq_start: int,
-        sample_rate: int,
-        gain: int,
-        interval: int,
-        jitter: float,
-        length: float,
+        bandwidth_hz: int,
+        gain_db: int,
+        interval_secs: int,
+        max_jitter_secs: float,
         hostname: str,
         organization: str,
         coordinates: str,
-        group: str,
+        group_id: str,
+        output_path: str,
+        logger: Logger,
     ):
-        log_time = datetime.now().strftime("%Y-%m-%d")
-        log_path = os.environ["HOME"] + "/logs/"
-        self.logger = Logger("streamer", log_path, "stream-" + log_time + ".log")
+        self.logger = logger
 
-        self.hostname = hostname
-        self.path = "/mnt/net-sync/"
-        self.margin = 0.2 / float(length)
-
-        self.interval = interval
-        self.jitter = jitter
+        self.path = Path(output_path)  # "/mnt/net-sync/"
 
         self.num_samples = num_samples
-        self.inc_samps = int(
-            self.num_samples * (1 + self.margin)
-        )  # number of samples received
-        self.samples = np.zeros(self.inc_samps, dtype=np.int32)
-        self.bandwidth = sample_rate  # bandwidth and sampling rate are always equal
-        self.gain_setting = gain
+        self.bandwidth_hz = bandwidth_hz
+        self.gain_db = gain_db
 
+        capture_duration_sec = num_samples / self.bandwidth_hz
+        self.margin = 0.2 / capture_duration_sec
+        self.raw_sample_count = int(self.num_samples * (1 + self.margin))
+
+        self.interval_secs = interval_secs
+        self.max_jitter_secs = max_jitter_secs
+
+        self.samples = np.zeros(self.raw_sample_count, dtype=np.int32)
+        self.hostname = hostname
+
+        # Dictionary to create the metadata records
+        self.md = {}
+        self.md["hostname"] = self.hostname
+        self.md["organization"] = organization
+        self.md["gcs"] = coordinates
+        self.md["interval"] = interval_secs
+        self.md["length"] = capture_duration_sec
+        self.md["gain"] = gain_db
+        # bandwidth and sampling rate are always equal
+        self.md["sampling_rate"] = self.bandwidth_hz
+        self.md["bit_depth"] = 16
+        self.md["group"] = group_id
+
+    def initialize(self):
+        """
+        Connects to the USRP, configures it, and sets up the data stream.
+        This method prepares the streamer to begin receiving samples.
+        """
         try:
-            self.usrp = uhd.usrp.MultiUSRP("num_recv_frames=1024")
-            self.usrp.set_rx_rate(sample_rate, 0)
-            self.usrp.set_rx_freq(uhd.libpyuhd.types.tune_request(center_freq_start), 0)
-            # The receive frequency can be changed to use an offset frequency by using the line below instead
-            # self.usrp.set_rx_freq(uhd.libpyuhd.types.tune_request(center_freq, offset), 0)
+            self._connect_and_config_usrp()
+            self._setup_stream()
+        except (RuntimeError, KeyError) as e:
+            self.logger.write_log(
+                "ERROR", f"Failed to initialize USRP: {type(e).__name__}: {e}"
+            )
+            raise
 
-            # Sets the receive gain value
-            self.usrp.set_rx_gain(gain, 0)
+        self._clear_recv_buffer()
 
-            # UHD supports activating the agc, DO NOT USE, this is only for informational purposes
-            # self.usrp.set_rx_agc(True, 0)
+    def _connect_and_config_usrp(self):
+        self.usrp = uhd.usrp.MultiUSRP("num_recv_frames=1024")
+        self.usrp.set_rx_rate(self.bandwidth_hz, 0)
+        self.usrp.set_rx_gain(self.gain_db, 0)
+        self.usrp.set_rx_antenna("RX2", 0)  # can be either 'TX/RX' or 'RX2'
 
-            # Choose the antenna port, either 'TX/RX' or 'RX2'
-            self.usrp.set_rx_antenna("RX2", 0)
-
-            # Get SDR serial number
-            self.serial = self.usrp.get_usrp_rx_info(0)["mboard_serial"]
-        except:
-            logger.write_log("ERROR", "USRP is not connected: %s" % (repr(e)))
-            return
+        self.serial = self.usrp.get_usrp_rx_info(0)["mboard_serial"]
+        self.md["serial"] = self.serial
 
         # Check if external clock present:
         if "%s" % (self.usrp.get_mboard_sensor("ref_locked", 0)) != "Ref: unlocked":
@@ -78,32 +92,19 @@ class Streamer:
             self.usrp.set_clock_source("external")
             self.usrp.set_time_source("external")
 
-        # Dictionary to create the metadata records
-        self.md = {}
-        self.md["hostname"] = self.hostname
-        self.md["serial"] = self.serial
-        self.md["organization"] = organization
-        self.md["gcs"] = coordinates
-        self.md["interval"] = interval
-        self.md["length"] = length
-        self.md["gain"] = gain
-        self.md["sampling_rate"] = sample_rate
-        self.md["bit_depth"] = 16
-        self.md["group"] = group
-
-    def setup_stream(self):
-        # Set up the stream and receive buffer
-
+    def _setup_stream(self):
         # StreamArgs determine CPU and OTW data rates - sc16 = 16 bit signed integer
         st_args = uhd.usrp.StreamArgs("sc16", "sc16")
         st_args.channels = [0]
         self.rx_metadata = uhd.types.RXMetadata()
         self.streamer = self.usrp.get_rx_stream(st_args)
-        self.buffer = self.streamer.get_max_num_samps()  # determines buffer size
-        # print(self.buffer)
-        self.recv_buffer = np.zeros(
-            (1, self.buffer), dtype=np.int32
-        )  # needs to be 2xStreamArgs, e.g sc16 -> np.int32
+        self.max_samps_per_chunk = self.streamer.get_max_num_samps()
+
+    def _clear_recv_buffer(self):
+        if self.recv_buffer is None:
+            self.recv_buffer = np.zeros((1, self.max_samps_per_chunk), dtype=np.int32)
+        else:
+            self.recv_buffer.fill(0)
 
     def start_stream(self):
         # Start Stream in continuous mode
@@ -112,53 +113,80 @@ class Streamer:
         # stream_cmd.time_spec = uhd.libpyuhd.types.time_spec(3.0) #3.0 needs to be tested
         self.streamer.issue_stream_cmd(stream_cmd)
 
-    def receive_samples(self, frequency):
-        # Receives samples from the SDR
-
-        # New buffer
-        self.recv_buffer = np.zeros((1, self.buffer), dtype=np.int32)
+    def receive_samples(self, frequency: int):
+        """
+        Receives samples from the SDR at a specified frequency.
+        """
+        self._clear_recv_buffer()
 
         # Set frequency for current loop step
         self.usrp.set_rx_freq(uhd.libpyuhd.types.tune_request(frequency), 0)
 
         # Generate timestamp for the filename
-        now = datetime.now()
-        self.timestamp = now.strftime("D%Y%m%dT%H%M%SM%f")
+        timestamp = datetime.now(timezone.utc)
+        timestamp_str = timestamp.strftime("D%Y%m%dT%H%M%SM%f")
 
-        # Receive the predetermined output of samples in groups of buffer size
-        for i in range(self.inc_samps // self.buffer):
+        sc16_path = self._build_filepath(timestamp_str)
+
+        chunk_size = self.max_samps_per_chunk
+        num_chunks = self.raw_sample_count // chunk_size
+
+        # Receive the predetermined output of samples in groups of chunk size
+        for i in range(num_chunks):
             self.streamer.recv(self.recv_buffer, self.rx_metadata)
-            self.samples[i * self.buffer : (i + 1) * self.buffer] = self.recv_buffer[0]
+            self.samples[i * chunk_size : (i + 1) * chunk_size] = self.recv_buffer[0]
 
-        # Store the samples and metadata file
-        self.samples[int(self.margin * self.num_samples) :].tofile(
-            str(
-                self.path
-                + self.serial
-                + "-"
-                + self.hostname
-                + "-"
-                + self.timestamp
-                + ".sc16"
-            )
+        # Store the samples
+        samples_to_discard = int(self.margin * self.num_samples)
+        self.samples[samples_to_discard:].tofile(sc16_path)
+
+        self.logger.write_log("INFO", f"File stored as {sc16_path}")
+
+        metadata_record = self._build_metadata_record(
+            frequency=frequency, collection_time=timestamp, file_path=sc16_path
         )
+
+        return metadata_record
+
+    def stop_stream(self):
+        """
+        Closes the data stream.
+        """
+        stream_cmd = uhd.types.StreamCMD(uhd.types.StreamMode.stop_cont)
+        self.streamer.issue_stream_cmd(stream_cmd)
+
+    def wait_for_next_collection(self):
+        """
+        Pauses execution until the next scheduled interval, plus a
+        configurable random jitter.
+        """
+        jitter_duration = 0.0
+        if self.max_jitter_secs > 0:
+            jitter_duration = random.uniform(0, self.max_jitter_secs)
+
+        base_wait_duration = calculate_wait_time(self.interval_secs)
+        total_wait_duration = base_wait_duration + jitter_duration
+
+        time.sleep(total_wait_duration)
 
         self.logger.write_log(
             "INFO",
-            "File stored as %s."
-            % (self.serial + "-" + self.hostname + "-" + self.timestamp),
+            f"Waiting for {total_wait_duration:.4f} seconds "
+            f"(base: {base_wait_duration:.4f} + jitter: {jitter_duration:.4f})...",
         )
 
-        # Clear buffer
-        self.recv_buffer = None
-
-    def receive_gain(self, gain):
-        # used to select an optimal gain setting
+    # XXX: Does this even work?
+    def calculate_optimal_gain(self, gain):
+        """
+        Calculates optimal gain for receiver.
+        """
         self.usrp.set_rx_gain(gain, 0)
         print(gain)
-        for i in range(self.num_samples // self.buffer):
+        for i in range(self.num_samples // self.max_samps_per_chunk):
             self.streamer.recv(self.recv_buffer, self.rx_metadata)
-            self.samples[i * self.buffer : (i + 1) * self.buffer] = self.recv_buffer[0]
+            self.samples[
+                i * self.max_samps_per_chunk : (i + 1) * self.max_samps_per_chunk
+            ] = self.recv_buffer[0]
 
         data = self.samples.view(np.int16)
         dataset = np.zeros(int(len(data) / 2))
@@ -171,30 +199,13 @@ class Streamer:
         values = [real, imag, count_real, count_imag]
         return values
 
-    def stop_stream(self):
-        # Closes the data stream
-        stream_cmd = uhd.types.StreamCMD(uhd.types.StreamMode.stop_cont)
-        self.streamer.issue_stream_cmd(stream_cmd)
-
-    def wait_for_next_collection(self):
+    def _build_filepath(self, timestamp_str: str) -> Path:
         """
-        Pauses execution until the next scheduled interval, plus a
-        configurable random jitter.
+        Constructs the full file path for an IQ data file using a given timestamp.
         """
-        jitter_duration = 0.0
-        if self.jitter > 0:
-            jitter_duration = random.uniform(0, self.jitter)
+        filename = f"{self.serial}-{self.hostname}-{timestamp_str}.sc16"
 
-        base_wait_duration = calculate_wait_time(self.interval)
-        total_wait_duration = base_wait_duration + jitter_duration
-
-        time.sleep(total_wait_duration)
-
-        self.logger.write_log(
-            "INFO",
-            f"Waiting for {total_wait_duration:.4f} seconds "
-            f"(base: {base_wait_duration:.4f} + jitter: {jitter_duration:.4f})...",
-        )
+        return self.path / filename
 
     def _build_metadata_record(
         self, frequency: int, collection_time: datetime, file_path: Path
@@ -209,5 +220,4 @@ class Streamer:
         data["timestamp"] = collection_time
         data["source_sc16_path"] = file_path
 
-        # Use dictionary unpacking to cleanly create the dataclass instance
         return MetadataRecord(**data)
