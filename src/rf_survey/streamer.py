@@ -4,7 +4,8 @@
 
 import uhd
 import numpy as np
-import time
+import threading
+import random
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -154,7 +155,7 @@ class Streamer:
         stream_cmd = uhd.types.StreamCMD(uhd.types.StreamMode.stop_cont)
         self.streamer.issue_stream_cmd(stream_cmd)
 
-    def wait_for_next_collection(self):
+    def wait_for_next_collection(self, shutdown_event: threading.Event):
         """
         Pauses execution until the next scheduled interval, plus a
         configurable random jitter.
@@ -166,7 +167,7 @@ class Streamer:
         base_wait_duration = calculate_wait_time(self.interval_secs)
         total_wait_duration = base_wait_duration + jitter_duration
 
-        time.sleep(total_wait_duration)
+        shutdown_event.wait(timeout=total_wait_duration)
 
         self.logger.write_log(
             "INFO",
