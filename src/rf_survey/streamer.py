@@ -6,10 +6,9 @@ import uhd
 import numpy as np
 import time
 from datetime import datetime, timezone
-import random
 from pathlib import Path
-from rf_shared.models import MetadataRecord
 
+from rf_shared.models import MetadataRecord
 
 from rf_survey.utils.scheduler import calculate_wait_time
 from rf_survey.utils.logger import Logger
