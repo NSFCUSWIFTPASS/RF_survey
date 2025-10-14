@@ -3,59 +3,43 @@
 # To view a copy of this license, visit http://creativecommons.org/licenses/by-nc-sa/4.0/ or send a letter to Creative Commons, PO Box 1866, Mountain View, CA 94042, USA.
 
 import time
-import os
+import threading
 import sys
-import random
+import signal
 import socket
+import uuid
 from tendo import singleton
 
 from rf_survey.mock_streamer import Streamer
 
 # from rf_survey.streamer import Streamer
 from rf_survey.utils.logger import Logger
-from rf_survey.utils.graceful_killer import GracefulKiller
 from rf_survey.config import parse_args
 # from Cronify import Cronify
-
-
-def group_number(length=6):
-    group = ""
-    for i in range(length):
-        random_integer = random.randint(97, 97 + 26 - 1)
-        flip_bit = random.randint(0, 1)
-        random_integer = random_integer - 32 if flip_bit == 1 else random_integer
-        group += chr(random_integer)
-    return group
-
-
-def sleep(seconds, grace):
-    now = time.monotonic()
-    end = now + seconds
-    for i in range(int(seconds)):
-        if grace.kill_now:
-            sys.exit(0)
-        elif time.monotonic() + 1 <= end:
-            time.sleep(1)
-        else:
-            time.sleep(end - time.monotonic())
-            break
 
 
 # def cleanup():
 #    cronjob = Cronify()
 
 
-def run():
+def run(args):
     main_logger = Logger("rf_survey")
     streamer_logger = Logger("streamer")
-    grace = GracefulKiller()
+    shutdown_event = threading.Event()
 
-    group = group_number()
-    args = parse_args()
+    def signal_handler(signum, frame):
+        if not shutdown_event.is_set():
+            main_logger.write_log(
+                "INFO", "Shutdown signal received. Signalling tasks to stop."
+            )
+            shutdown_event.set()
+
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
 
     hostname = socket.gethostname()
+    group_id = str(uuid.uuid4())
 
-    # Starts the data collection streamer (not the data collection itself)
     stream = Streamer(
         num_samples=args.samples,
         bandwidth_hz=args.bandwidth,
@@ -65,7 +49,7 @@ def run():
         hostname=hostname,
         organization=args.organization,
         coordinates=args.coordinates,
-        group_id=group,
+        group_id=group_id,
         output_path="/mnt/net-sync/",
         logger=streamer_logger,
     )
@@ -76,46 +60,68 @@ def run():
     # comment out for now, review methods for restart on pi reboot
     # cronjob = Cronify()
 
-    if args.cycles == 0:
-        while not grace.kill_now:
-            perform_frequency_sweep(stream, main_logger, grace, args)
-    else:
-        for _ in range(args.cycles):
-            if grace.kill_now:
-                break
-            perform_frequency_sweep(stream, main_logger, grace, args)
+    def sweep():
+        perform_frequency_sweep(
+            stream,
+            main_logger,
+            shutdown_event,
+            args.frequency_start,
+            args.frequency_end,
+            args.bandwidth,
+            args.records,
+        )
 
-    # Stops the stream and closes the connection to the SDR
-    stream.stop_stream()
+    try:
+        if args.cycles == 0:
+            while not shutdown_event.is_set():
+                sweep()
+        else:
+            for _ in range(args.cycles):
+                if shutdown_event.is_set():
+                    break
+                sweep()
+    except Exception as e:
+        main_logger.write_log(
+            "ERROR",
+            f"Critical error: {e}",
+        )
+
+    finally:
+        main_logger.write_log("INFO", "Cleaning up resources... stopping stream.")
+        stream.stop_stream()
 
 
-def perform_frequency_sweep(stream, logger, grace, args):
+def perform_frequency_sweep(
+    stream: Streamer,
+    logger: Logger,
+    shutdown_event,
+    frequency_start: int,
+    frequency_end: int,
+    bandwidth: int,
+    records: int,
+):
     """
     Performs a single sweep across the specified frequency range.
     """
-    start_frequency = args.frequency_start
-    try:
-        while start_frequency <= args.frequency_end and not grace.kill_now:
-            logger.write_log("INFO", "Frequency step: %s" % (start_frequency / 1e6))
-            # The -r [records] argument determines how many IQ data files are created
-            for _ in range(args.records):
-                if grace.kill_now:
-                    break
+    center_frequency_hz = frequency_start
+    while center_frequency_hz <= frequency_end and not shutdown_event.is_set():
+        for _ in range(records):
+            # this sleep is interruptible from a signal
+            stream.wait_for_next_collection(shutdown_event)
 
-                stream.wait_for_next_collection()
+            # check if we were interrupted if so break
+            if shutdown_event.is_set():
+                break
 
-                # Starts the collection of IQ data samples
-                start_time = time.time()
-                stream.receive_samples(start_frequency)
-                end_time = time.time()
-                logger.write_log(
-                    "INFO", "Processing time: %s" % (end_time - start_time)
-                )
+            start_time = time.time()
+            stream.receive_samples(center_frequency_hz)
+            end_time = time.time()
+            logger.write_log(
+                "INFO",
+                f"Frequency step: {center_frequency_hz} Processing time: {end_time - start_time}",
+            )
 
-            start_frequency = start_frequency + args.bandwidth
-    except TypeError:
-        logger.write_log("DEBUG", "An end center frequency needs to be provided.")
-        raise
+        center_frequency_hz += bandwidth
 
 
 def main():
@@ -124,7 +130,8 @@ def main():
     except singleton.SingleInstanceException:
         sys.exit("Survey already running! Another process holds the lock file.")
 
-    run()
+    args = parse_args()
+    run(args)
 
 
 if __name__ == "__main__":
