@@ -4,23 +4,18 @@
 
 import time
 import os
-import argparse
 import sys
 import random
-from datetime import datetime
 import socket
+from tendo import singleton
 
 from rf_survey.mock_streamer import Streamer
+
+# from rf_survey.streamer import Streamer
 from rf_survey.utils.logger import Logger
 from rf_survey.utils.graceful_killer import GracefulKiller
+from rf_survey.config import parse_args
 # from Cronify import Cronify
-
-from config import parse_args
-
-#####################################################
-# The streamer class contains all functions related #
-# to running the I/Q data collection stream.        #
-#####################################################
 
 
 def group_number(length=6):
@@ -46,81 +41,52 @@ def sleep(seconds, grace):
             break
 
 
-def cleanup():
-    if os.path.exists(os.environ["HOME"] + "/rf_survey.pid"):
-        os.remove(os.environ["HOME"] + "/rf_survey.pid")
-    cronjob = Cronify()
-    cronjob.delete_job()
+# def cleanup():
+#    cronjob = Cronify()
 
 
 def run():
-    log_time = datetime.now().strftime("%Y-%m-%d")
-    log_path = os.environ["HOME"] + "/logs/"
-    logger = Logger("rf_survey", log_path, "stream-" + log_time + ".log")
+    main_logger = Logger("rf_survey")
+    streamer_logger = Logger("streamer")
     grace = GracefulKiller()
-
-    with open(os.environ["HOME"] + "/rf_survey.pid", "w") as f:
-        f.write(str(os.getpid()))
-    logger.write_log("DEBUG", "PID: %s" % (os.getpid()))
-    if os.path.exists("/home/pi/nohup.out"):
-        os.remove("/home/pi/nohup.out")
 
     group = group_number()
     args = parse_args()
 
-    length = args.samples / args.bandwidth
     hostname = socket.gethostname()
 
     # Starts the data collection streamer (not the data collection itself)
     stream = Streamer(
-        args.samples,
-        args.frequency_start,
-        args.bandwidth,
-        args.gain,
-        args.timer,
-        args.jitter,
-        length,
-        hostname,
-        args.organization,
-        args.coordinates,
-        group,
+        num_samples=args.samples,
+        bandwidth_hz=args.bandwidth,
+        gain_db=args.gain,
+        interval_secs=args.timer,
+        max_jitter_secs=args.jitter,
+        hostname=hostname,
+        organization=args.organization,
+        coordinates=args.coordinates,
+        group_id=group,
+        output_path="/mnt/net-sync/",
+        logger=streamer_logger,
     )
 
-    stream.setup_stream()
+    stream.initialize()
     stream.start_stream()
 
     # comment out for now, review methods for restart on pi reboot
     # cronjob = Cronify()
 
-    # THIS WILL BE THE METADATA
-    # configs = {
-    #    "organization": args.organization,
-    #    "gcs": args.coordinates,
-    #    "start_frequency": args.frequency_start,
-    #    "end_frequency": args.frequency_end,
-    #    "sampling_rate": args.bandwidth,
-    #    "interval": int(args.timer),
-    #    "samples": args.samples,
-    #    "cycles": args.cycles,
-    #    "recordings": args.records,
-    #    "gain": args.gain,
-    #    "group": group,
-    #    "start_time": str(datetime.now()),
-    #    "delay": args.delay,
-    # }
-
     if args.cycles == 0:
         while not grace.kill_now:
-            perform_frequency_sweep(stream, logger, grace, args)
+            perform_frequency_sweep(stream, main_logger, grace, args)
     else:
         for _ in range(args.cycles):
             if grace.kill_now:
                 break
-            perform_frequency_sweep(stream, logger, grace, args)
+            perform_frequency_sweep(stream, main_logger, grace, args)
 
     # Stops the stream and closes the connection to the SDR
     stream.stop_stream()
-    os.remove(os.environ["HOME"] + "/rf_survey.pid")
 
 
 def perform_frequency_sweep(stream, logger, grace, args):
@@ -153,12 +119,11 @@ def perform_frequency_sweep(stream, logger, grace, args):
 
 
 def main():
-    pid_path = os.environ["HOME"] + "/rf_survey.pid"
-    if os.path.exists(pid_path):
-        with open(os.environ["HOME"] + "/rf_survey.pid", "r") as f:
-            pid = f.readlines()
-        if os.path.exists("/proc/" + pid[0]):
-            sys.exit("Survey already running! Interrupt running survey first.")
+    try:
+        _ = singleton.SingleInstance()
+    except singleton.SingleInstanceException:
+        sys.exit("Survey already running! Another process holds the lock file.")
+
     run()
 
 
