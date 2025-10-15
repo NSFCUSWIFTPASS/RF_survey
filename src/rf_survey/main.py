@@ -2,19 +2,20 @@
 # This work is licensed under the Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International License.
 # To view a copy of this license, visit http://creativecommons.org/licenses/by-nc-sa/4.0/ or send a letter to Creative Commons, PO Box 1866, Mountain View, CA 94042, USA.
 
+import asyncio
 import time
-import threading
 import sys
 import signal
 import socket
 import uuid
 from tendo import singleton
 
-from rf_survey.mock_streamer import Streamer
+from rf_shared.nats_client import NatsProducer
 
-# from rf_survey.streamer import Streamer
+from rf_survey.mock_streamer import Streamer
 from rf_survey.utils.logger import Logger
-from rf_survey.config import parse_args
+from rf_survey.cli import parse_args
+from rf_survey.config import settings
 # from Cronify import Cronify
 
 
@@ -22,18 +23,15 @@ from rf_survey.config import parse_args
 #    cronjob = Cronify()
 
 
-def run(args):
-    main_logger = Logger("rf_survey")
-    streamer_logger = Logger("streamer")
-    shutdown_event = threading.Event()
+async def run(args):
+    main_logger = Logger(name="rf_survey", log_level=settings.LOG_LEVEL)
+    shutdown_event = asyncio.Event()
+    loop = asyncio.get_running_loop()
 
-    def signal_handler(signum, frame):
+    def handle_signal():
         if not shutdown_event.is_set():
             main_logger.info("Shutdown signal received. Signalling tasks to stop.")
             shutdown_event.set()
-
-    signal.signal(signal.SIGINT, signal_handler)
-    signal.signal(signal.SIGTERM, signal_handler)
 
     hostname = socket.gethostname()
     group_id = str(uuid.uuid4())
@@ -48,18 +46,28 @@ def run(args):
         organization=args.organization,
         coordinates=args.coordinates,
         group_id=group_id,
-        output_path="/mnt/net-sync/",
-        logger=streamer_logger,
+        output_path=settings.STORAGE_PATH,
+        logger=Logger(name="streamer", log_level=settings.LOG_LEVEL),
     )
 
-    stream.initialize()
-    stream.start_stream()
+    subject = f"jobs.rf.{hostname}"
+
+    producer = NatsProducer(
+        logger=Logger(name="nats_producer", log_level=settings.LOG_LEVEL),
+        subject=subject,
+        connect_options={
+            "servers": settings.NATS_URL,
+            "token": settings.NATS_TOKEN.get_secret_value()
+            if settings.NATS_TOKEN
+            else None,
+        },
+    )
 
     # comment out for now, review methods for restart on pi reboot
     # cronjob = Cronify()
 
-    def sweep():
-        perform_frequency_sweep(
+    async def sweep():
+        await perform_frequency_sweep(
             stream,
             main_logger,
             shutdown_event,
@@ -67,17 +75,26 @@ def run(args):
             args.frequency_end,
             args.bandwidth,
             args.records,
+            producer,
         )
 
     try:
+        stream.initialize()
+        stream.start_stream()
+        await producer.connect()
+
+        # setup signal handlers
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            loop.add_signal_handler(sig, handle_signal)
+
         if args.cycles == 0:
             while not shutdown_event.is_set():
-                sweep()
+                await sweep()
         else:
             for _ in range(args.cycles):
                 if shutdown_event.is_set():
                     break
-                sweep()
+                await sweep()
 
     except Exception as e:
         main_logger.error(f"Critical error: {e}")
@@ -85,16 +102,18 @@ def run(args):
     finally:
         main_logger.info("Cleaning up resources... stopping stream.")
         stream.stop_stream()
+        await producer.close()
 
 
-def perform_frequency_sweep(
+async def perform_frequency_sweep(
     stream: Streamer,
     logger: Logger,
-    shutdown_event,
+    shutdown_event: asyncio.Event,
     frequency_start: int,
     frequency_end: int,
     bandwidth: int,
     records: int,
+    producer: NatsProducer,
 ):
     """
     Performs a single sweep across the specified frequency range.
@@ -103,7 +122,7 @@ def perform_frequency_sweep(
     while center_frequency_hz <= frequency_end and not shutdown_event.is_set():
         for _ in range(records):
             # this sleep is interruptible from a signal
-            stream.wait_for_next_collection(shutdown_event)
+            await stream.wait_for_next_collection(shutdown_event)
 
             # check if we were interrupted if so break
             if shutdown_event.is_set():
@@ -117,6 +136,8 @@ def perform_frequency_sweep(
                 f"Frequency step: {center_frequency_hz} Processing time: {end_time - start_time}"
             )
 
+            await producer.publish_metadata(metadata_record)
+
         center_frequency_hz += bandwidth
 
 
@@ -127,7 +148,7 @@ def main():
         sys.exit("Survey already running! Another process holds the lock file.")
 
     args = parse_args()
-    run(args)
+    asyncio.run(run(args))
 
 
 if __name__ == "__main__":
