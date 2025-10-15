@@ -13,7 +13,7 @@ from tendo import singleton
 from rf_shared.nats_client import NatsProducer
 from rf_shared.logger import Logger
 
-from rf_survey.mock_streamer import Streamer
+from rf_survey.streamer import Streamer
 from rf_survey.cli import parse_args
 from rf_survey.config import settings
 
@@ -57,9 +57,6 @@ async def run(args):
             else None,
         },
     )
-
-    # comment out for now, review methods for restart on pi reboot
-    # cronjob = Cronify()
 
     async def sweep():
         await perform_frequency_sweep(
