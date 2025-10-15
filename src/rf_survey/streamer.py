@@ -4,7 +4,7 @@
 
 import uhd
 import numpy as np
-import threading
+import asyncio
 import random
 from datetime import datetime, timezone
 from pathlib import Path
@@ -118,7 +118,7 @@ class Streamer:
         stream_cmd = uhd.types.StreamCMD(uhd.types.StreamMode.stop_cont)
         self.streamer.issue_stream_cmd(stream_cmd)
 
-    def receive_samples(self, frequency: int):
+    def receive_samples(self, frequency: int) -> MetadataRecord:
         """
         Receives samples from the SDR at a specified frequency.
         """
@@ -153,7 +153,7 @@ class Streamer:
 
         return metadata_record
 
-    def wait_for_next_collection(self, shutdown_event: threading.Event):
+    async def wait_for_next_collection(self, shutdown_event: asyncio.Event):
         """
         Pauses execution until the next scheduled interval, plus a
         configurable random jitter.
@@ -165,7 +165,11 @@ class Streamer:
         base_wait_duration = calculate_wait_time(self.interval_secs)
         total_wait_duration = base_wait_duration + jitter_duration
 
-        shutdown_event.wait(timeout=total_wait_duration)
+        try:
+            await asyncio.wait_for(shutdown_event.wait(), timeout=total_wait_duration)
+        except asyncio.TimeoutError:
+            # This is the normal case: the wait finished without being interrupted.
+            pass
 
         self.logger.info(
             f"Waiting for {total_wait_duration:.4f} seconds "
