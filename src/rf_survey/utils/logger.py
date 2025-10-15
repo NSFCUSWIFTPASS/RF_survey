@@ -47,7 +47,7 @@ class Logger:
             self.logger.addHandler(file_handler)
 
             console_handler = logging.StreamHandler(sys.stderr)
-            console_handler.setLevel(logging.WARNING)
+            console_handler.setLevel(logging.INFO)
             console_handler.setFormatter(formatter)
             self.logger.addHandler(console_handler)
 
