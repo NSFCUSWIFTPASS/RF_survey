@@ -16,11 +16,6 @@ from rf_survey.mock_streamer import Streamer
 from rf_survey.utils.logger import Logger
 from rf_survey.cli import parse_args
 from rf_survey.config import settings
-# from Cronify import Cronify
-
-
-# def cleanup():
-#    cronjob = Cronify()
 
 
 async def run(args):
