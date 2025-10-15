@@ -1,1 +1,17 @@
-pyproject.toml
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.env
+
+# Test data
+tests/integration_data
+
+# Virtual environments
+.venv/
+venv/
+
+# Hatch
+.hatch/

@@ -1,4 +1,0 @@
-uhd
-numpy
-python-dateutil
-gpiozero
