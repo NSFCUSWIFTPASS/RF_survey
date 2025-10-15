@@ -11,9 +11,9 @@ import uuid
 from tendo import singleton
 
 from rf_shared.nats_client import NatsProducer
+from rf_shared.logger import Logger
 
 from rf_survey.mock_streamer import Streamer
-from rf_survey.utils.logger import Logger
 from rf_survey.cli import parse_args
 from rf_survey.config import settings
 
