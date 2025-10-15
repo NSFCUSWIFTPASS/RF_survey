@@ -29,9 +29,7 @@ def run(args):
 
     def signal_handler(signum, frame):
         if not shutdown_event.is_set():
-            main_logger.write_log(
-                "INFO", "Shutdown signal received. Signalling tasks to stop."
-            )
+            main_logger.info("Shutdown signal received. Signalling tasks to stop.")
             shutdown_event.set()
 
     signal.signal(signal.SIGINT, signal_handler)
@@ -80,14 +78,12 @@ def run(args):
                 if shutdown_event.is_set():
                     break
                 sweep()
+
     except Exception as e:
-        main_logger.write_log(
-            "ERROR",
-            f"Critical error: {e}",
-        )
+        main_logger.error(f"Critical error: {e}")
 
     finally:
-        main_logger.write_log("INFO", "Cleaning up resources... stopping stream.")
+        main_logger.info("Cleaning up resources... stopping stream.")
         stream.stop_stream()
 
 
@@ -114,11 +110,11 @@ def perform_frequency_sweep(
                 break
 
             start_time = time.time()
-            stream.receive_samples(center_frequency_hz)
+            metadata_record = stream.receive_samples(center_frequency_hz)
             end_time = time.time()
-            logger.write_log(
-                "INFO",
-                f"Frequency step: {center_frequency_hz} Processing time: {end_time - start_time}",
+
+            logger.info(
+                f"Frequency step: {center_frequency_hz} Processing time: {end_time - start_time}"
             )
 
         center_frequency_hz += bandwidth

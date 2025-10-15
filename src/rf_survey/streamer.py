@@ -10,9 +10,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from rf_shared.models import MetadataRecord
+from rf_shared.interfaces import ILogger
 
 from rf_survey.utils.scheduler import calculate_wait_time
-from rf_survey.utils.logger import Logger
 
 
 class Streamer:
@@ -28,11 +28,11 @@ class Streamer:
         coordinates: str,
         group_id: str,
         output_path: str,
-        logger: Logger,
+        logger: ILogger,
     ):
         self.logger = logger
 
-        self.path = Path(output_path)  # "/mnt/net-sync/"
+        self.path = Path(output_path)
 
         self.num_samples = num_samples
         self.bandwidth_hz = bandwidth_hz
@@ -70,9 +70,7 @@ class Streamer:
             self._connect_and_config_usrp()
             self._setup_stream()
         except (RuntimeError, KeyError) as e:
-            self.logger.write_log(
-                "ERROR", f"Failed to initialize USRP: {type(e).__name__}: {e}"
-            )
+            self.logger.error(f"Failed to initialize USRP: {type(e).__name__}: {e}")
             raise
 
         self._clear_recv_buffer()
@@ -113,6 +111,13 @@ class Streamer:
         # stream_cmd.time_spec = uhd.libpyuhd.types.time_spec(3.0) #3.0 needs to be tested
         self.streamer.issue_stream_cmd(stream_cmd)
 
+    def stop_stream(self):
+        """
+        Closes the data stream.
+        """
+        stream_cmd = uhd.types.StreamCMD(uhd.types.StreamMode.stop_cont)
+        self.streamer.issue_stream_cmd(stream_cmd)
+
     def receive_samples(self, frequency: int):
         """
         Receives samples from the SDR at a specified frequency.
@@ -140,20 +145,13 @@ class Streamer:
         samples_to_discard = int(self.margin * self.num_samples)
         self.samples[samples_to_discard:].tofile(sc16_path)
 
-        self.logger.write_log("INFO", f"File stored as {sc16_path}")
+        self.logger.info(f"File stored as {sc16_path}")
 
         metadata_record = self._build_metadata_record(
             frequency=frequency, collection_time=timestamp, file_path=sc16_path
         )
 
         return metadata_record
-
-    def stop_stream(self):
-        """
-        Closes the data stream.
-        """
-        stream_cmd = uhd.types.StreamCMD(uhd.types.StreamMode.stop_cont)
-        self.streamer.issue_stream_cmd(stream_cmd)
 
     def wait_for_next_collection(self, shutdown_event: threading.Event):
         """
@@ -169,8 +167,7 @@ class Streamer:
 
         shutdown_event.wait(timeout=total_wait_duration)
 
-        self.logger.write_log(
-            "INFO",
+        self.logger.info(
             f"Waiting for {total_wait_duration:.4f} seconds "
             f"(base: {base_wait_duration:.4f} + jitter: {jitter_duration:.4f})...",
         )

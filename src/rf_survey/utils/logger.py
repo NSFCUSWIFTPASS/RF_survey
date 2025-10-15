@@ -53,18 +53,21 @@ class Logger:
 
         except (OSError, IOError) as e:
             print(
-                f"CRITICAL: Could not configure logger '{self.name}'. Error: {e}",
+                f"ERROR: Could not configure logger '{self.name}'. Error: {e}",
                 file=sys.stderr,
             )  # fall back to stderr
 
-    def write_log(self, level, message):
-        if level == "INFO":
-            self.logger.info(message)
-        if level == "DEBUG":
-            self.logger.debug(message)
-        if level == "WARNING":
-            self.logger.warning(message)
-        if level == "ERROR":
-            self.logger.error(message)
-        if level == "CRITICAL":
-            self.logger.critical(message)
+    def debug(self, msg: str, *args, **kwargs):
+        self.logger.debug(msg, *args, **kwargs)
+
+    def info(self, msg: str, *args, **kwargs):
+        self.logger.info(msg, *args, **kwargs)
+
+    def warning(self, msg: str, *args, **kwargs):
+        self.logger.warning(msg, *args, **kwargs)
+
+    def error(self, msg: str, *args, **kwargs):
+        self.logger.error(msg, *args, **kwargs)
+
+    def critical(self, msg: str, *args, **kwargs):
+        self.logger.critical(msg, *args, **kwargs)
