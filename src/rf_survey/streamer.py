@@ -6,11 +6,13 @@ import uhd
 import numpy as np
 import asyncio
 import random
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
 from rf_shared.models import MetadataRecord
 from rf_shared.interfaces import ILogger
+from rf_shared.checksum import get_file_checksum
 
 from rf_survey.utils.scheduler import calculate_wait_time
 
@@ -26,7 +28,6 @@ class Streamer:
         hostname: str,
         organization: str,
         coordinates: str,
-        group_id: str,
         output_path: str,
         logger: ILogger,
     ):
@@ -59,7 +60,7 @@ class Streamer:
         # bandwidth and sampling rate are always equal
         self.md["sampling_rate"] = self.bandwidth_hz
         self.md["bit_depth"] = 16
-        self.md["group"] = group_id
+        self.md["group"] = str(uuid.uuid4())
 
     def initialize(self):
         """
@@ -144,11 +145,16 @@ class Streamer:
         # Store the samples
         samples_to_discard = int(self.margin * self.num_samples)
         self.samples[samples_to_discard:].tofile(sc16_path)
-
         self.logger.info(f"File stored as {sc16_path}")
 
+        file_checksum = get_file_checksum(sc16_path)
+        self.logger.info(f"Calculated checksum: {file_checksum}")
+
         metadata_record = self._build_metadata_record(
-            frequency=frequency, collection_time=timestamp, file_path=sc16_path
+            frequency=frequency,
+            collection_time=timestamp,
+            file_path=sc16_path,
+            file_checksum=file_checksum,
         )
 
         return metadata_record
@@ -209,7 +215,11 @@ class Streamer:
         return self.path / filename
 
     def _build_metadata_record(
-        self, frequency: int, collection_time: datetime, file_path: Path
+        self,
+        frequency: int,
+        collection_time: datetime,
+        file_path: Path,
+        file_checksum: str,
     ) -> MetadataRecord:
         """
         Factory method to assemble a MetadataRecord from the streamer's static
@@ -219,6 +229,7 @@ class Streamer:
 
         data["frequency"] = frequency
         data["timestamp"] = collection_time
-        data["source_sc16_path"] = file_path
+        data["source_path"] = file_path
+        data["checksum"] = file_checksum
 
         return MetadataRecord(**data)
