@@ -1,4 +1,5 @@
-from pydantic import SecretStr, computed_field
+import socket
+from pydantic import SecretStr, computed_field, Field
 from pydantic_settings import SettingsConfigDict, BaseSettings
 
 
@@ -12,6 +13,8 @@ class AppSettings(BaseSettings):
     STORAGE_PATH: str
     LOG_LEVEL: str = "INFO"
 
+    HOSTNAME: str = Field(default_factory=socket.gethostname)
+
     model_config = SettingsConfigDict(
         env_prefix="RF_", env_file=".env", env_file_encoding="utf-8"
     )
@@ -23,6 +26,12 @@ class AppSettings(BaseSettings):
         Dynamically constructs the NATS connection URL.
         """
         return f"nats://{self.NATS_HOST}:{self.NATS_PORT}"
+
+    @computed_field
+    @property
+    def NATS_SUBJECT(self) -> str:
+        """Dynamically constructs the NATS subject for this host."""
+        return f"jobs.rf.{self.HOSTNAME}"
 
 
 settings = AppSettings()
