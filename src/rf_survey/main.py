@@ -10,7 +10,7 @@ from rf_shared.logger import Logger
 from rf_shared.nats_client import NatsProducer
 
 from rf_survey.app import SurveyApp
-from rf_survey.mock_streamer import Streamer
+from rf_survey.streamer import Streamer
 from rf_survey.config import settings
 from rf_survey.cli import parse_args
 

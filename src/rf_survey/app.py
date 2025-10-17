@@ -5,7 +5,7 @@ import signal
 from rf_shared.nats_client import NatsProducer
 from rf_shared.interfaces import ILogger
 
-from rf_survey.mock_streamer import Streamer
+from rf_survey.streamer import Streamer
 
 
 class SurveyApp:
