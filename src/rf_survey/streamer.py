@@ -46,6 +46,8 @@ class Streamer:
         self.interval_secs = interval_secs
         self.max_jitter_secs = max_jitter_secs
 
+        self.recv_buffer = None
+
         self.samples = np.zeros(self.raw_sample_count, dtype=np.int32)
         self.hostname = hostname
 
