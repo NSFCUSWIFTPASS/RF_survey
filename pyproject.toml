@@ -9,7 +9,7 @@ description = "Collects baseline measurements of ambient radio frequency (RF) in
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "numpy==2.3.3",
+    "numpy==1.26.4",
     "tendo==0.3.0",
     "pydantic==2.12.0",
     "pydantic-settings==2.11.0",
