@@ -13,11 +13,11 @@ dependencies = [
     "tendo==0.3.0",
     "pydantic==2.12.0",
     "pydantic-settings==2.11.0",
-    "rf-survey-shared @ git+https://github.com/NSFCUSWIFTPASS/rf-survey-shared.git@v0.1.7",
+    "rf-shared @ git+https://github.com/NSFCUSWIFTPASS/rf-shared.git@v0.1.0",
 ]
 
 [project.urls]
-Source = "https://github.com/NSFCUSWIFTPASS/RF_survey"
+source = "https://github.com/NSFCUSWIFTPASS/rf-survey"
 
 [project.scripts]
 rf-survey = "rf_survey.main:main"
