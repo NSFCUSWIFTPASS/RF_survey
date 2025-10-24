@@ -9,10 +9,11 @@ import random
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Optional
 
 from rf_shared.models import MetadataRecord
 from rf_shared.interfaces import ILogger
-from rf_shared.checksum import get_file_checksum
+from rf_shared.checksum import get_checksum
 
 from rf_survey.utils.scheduler import calculate_wait_time
 
@@ -46,9 +47,10 @@ class Streamer:
         self.interval_secs = interval_secs
         self.max_jitter_secs = max_jitter_secs
 
-        self.recv_buffer = None
-
+        self.recv_buffer: Optional[np.ndarray] = None
+        self.max_samps_per_chunk: int = 0
         self.samples = np.zeros(self.raw_sample_count, dtype=np.int32)
+
         self.hostname = hostname
 
         # Dictionary to create the metadata records
@@ -76,8 +78,6 @@ class Streamer:
             self.logger.error(f"Failed to initialize USRP: {type(e).__name__}: {e}")
             raise
 
-        self._clear_recv_buffer()
-
     def _connect_and_config_usrp(self):
         self.usrp = uhd.usrp.MultiUSRP("num_recv_frames=1024")
         self.usrp.set_rx_rate(self.bandwidth_hz, 0)
@@ -100,12 +100,12 @@ class Streamer:
         self.rx_metadata = uhd.types.RXMetadata()
         self.streamer = self.usrp.get_rx_stream(st_args)
         self.max_samps_per_chunk = self.streamer.get_max_num_samps()
+        self.recv_buffer = np.zeros((1, self.max_samps_per_chunk), dtype=np.int32)
 
-    def _clear_recv_buffer(self):
-        if self.recv_buffer is None:
-            self.recv_buffer = np.zeros((1, self.max_samps_per_chunk), dtype=np.int32)
-        else:
-            self.recv_buffer.fill(0)
+    def _clear_buffers(self):
+        assert self.recv_buffer is not None, "Streamer not properly initialized."
+        self.recv_buffer.fill(0)
+        self.samples.fill(0)
 
     def start_stream(self):
         # Start Stream in continuous mode
@@ -125,7 +125,10 @@ class Streamer:
         """
         Receives samples from the SDR at a specified frequency.
         """
-        self._clear_recv_buffer()
+        assert (
+            self.streamer is not None and self.recv_buffer is not None
+        ), "Streamer not properly initialized"
+        self._clear_buffers()
 
         # Set frequency for current loop step
         self.usrp.set_rx_freq(uhd.libpyuhd.types.tune_request(frequency), 0)
@@ -146,11 +149,14 @@ class Streamer:
 
         # Store the samples
         samples_to_discard = int(self.margin * self.num_samples)
-        self.samples[samples_to_discard:].tofile(sc16_path)
-        self.logger.info(f"File stored as {sc16_path}")
+        samples_to_write = self.samples[samples_to_discard:]
 
-        file_checksum = get_file_checksum(sc16_path)
+        data_bytes = samples_to_write.tobytes()
+        file_checksum = get_checksum(data_bytes)
         self.logger.info(f"Calculated checksum: {file_checksum}")
+
+        samples_to_write.tofile(sc16_path)
+        self.logger.info(f"File stored as {sc16_path}")
 
         metadata_record = self._build_metadata_record(
             frequency=frequency,
@@ -189,6 +195,10 @@ class Streamer:
         """
         Calculates optimal gain for receiver.
         """
+        assert (
+            self.streamer is not None and self.recv_buffer is not None
+        ), "Streamer not properly initialized"
+
         self.usrp.set_rx_gain(gain, 0)
         print(gain)
         for i in range(self.num_samples // self.max_samps_per_chunk):
