@@ -13,6 +13,9 @@ class AppSettings(BaseSettings):
     STORAGE_PATH: str
     LOG_LEVEL: str = "INFO"
 
+    ZMC_HTTP: str | None = None
+    MONITOR_GUID: str | None = None
+
     HOSTNAME: str = Field(default_factory=socket.gethostname)
 
     model_config = SettingsConfigDict(
