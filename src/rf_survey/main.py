@@ -11,6 +11,9 @@ from rf_shared.nats_client import NatsProducer
 
 from rf_survey.app import SurveyApp
 from rf_survey.streamer import Streamer
+from rf_survey.heartbeat import (
+    HeartbeatManager,
+)
 from rf_survey.config import settings
 from rf_survey.cli import parse_args
 
@@ -25,6 +28,8 @@ def main():
         sys.exit("Survey already running! Another process holds the lock file.")
 
     args = parse_args()
+
+    shutdown_event = asyncio.Event()
 
     streamer = Streamer(
         num_samples=args.samples,
@@ -50,10 +55,19 @@ def main():
         logger=Logger(name="nats_producer", log_level=settings.LOG_LEVEL),
     )
 
+    heartbeat_manager = HeartbeatManager.create(
+        heartbeat_guid=args.heartbeat_guid,
+        sample_interval=args.timer,
+        shutdown_event=shutdown_event,
+        logger=Logger("heartbeat", settings.LOG_LEVEL),
+    )
+
     app = SurveyApp(
         args=args,
+        shutdown_event=shutdown_event,
         streamer=streamer,
         producer=producer,
+        heartbeat_manager=heartbeat_manager,
         logger=Logger("rf_survey", settings.LOG_LEVEL),
     )
 
