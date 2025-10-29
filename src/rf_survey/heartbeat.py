@@ -19,6 +19,7 @@ class IHeartbeatManager(Protocol):
 @dataclass
 class HeartbeatConfig:
     guid: str
+    zmc_http: str
     timeout_seconds: float
 
 
@@ -43,20 +44,18 @@ class HeartbeatManager:
         cls,
         monitor_guid: Optional[str],
         sample_interval: int,
+        zmc_http: Optional[str],
         shutdown_event: asyncio.Event,
         logger: ILogger,
     ) -> IHeartbeatManager:
         """
         Factory method that creates a manager.
-
-        Returns:
-            A tuple of (IHeartbeatManager instance, event_queue instance).
         """
-        if monitor_guid:
+        if monitor_guid and zmc_http:
             timeout_seconds = sample_interval + 10  # add some buffer time
 
             heartbeat_config = HeartbeatConfig(
-                guid=monitor_guid, timeout_seconds=timeout_seconds
+                guid=monitor_guid, zmc_http=zmc_http, timeout_seconds=timeout_seconds
             )
 
             return HeartbeatManager(

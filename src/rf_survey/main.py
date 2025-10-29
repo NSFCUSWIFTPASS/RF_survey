@@ -56,8 +56,9 @@ def main():
     )
 
     heartbeat_manager = HeartbeatManager.create(
-        heartbeat_guid=args.heartbeat_guid,
+        monitor_guid=settings.MONITOR_GUID,
         sample_interval=args.timer,
+        zmc_http=settings.ZMC_HTTP,
         shutdown_event=shutdown_event,
         logger=Logger("heartbeat", settings.LOG_LEVEL),
     )
