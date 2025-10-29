@@ -41,7 +41,7 @@ class HeartbeatManager:
     @classmethod
     def create(
         cls,
-        heartbeat_guid: Optional[str],
+        monitor_guid: Optional[str],
         sample_interval: int,
         shutdown_event: asyncio.Event,
         logger: ILogger,
@@ -52,11 +52,11 @@ class HeartbeatManager:
         Returns:
             A tuple of (IHeartbeatManager instance, event_queue instance).
         """
-        if heartbeat_guid:
+        if monitor_guid:
             timeout_seconds = sample_interval + 10  # add some buffer time
 
             heartbeat_config = HeartbeatConfig(
-                guid=heartbeat_guid, timeout_seconds=timeout_seconds
+                guid=monitor_guid, timeout_seconds=timeout_seconds
             )
 
             return HeartbeatManager(
