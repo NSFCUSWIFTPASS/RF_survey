@@ -121,7 +121,17 @@ class Streamer:
         stream_cmd = uhd.types.StreamCMD(uhd.types.StreamMode.stop_cont)
         self.streamer.issue_stream_cmd(stream_cmd)
 
-    def receive_samples(self, frequency: int) -> MetadataRecord:
+    async def receive_samples(self, frequency: int) -> MetadataRecord:
+        """
+        Asynchronously executes the blocking SDR sampling and file I/O operations
+        in a separate thread to avoid blocking the main event loop.
+        """
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(
+            None, self._receive_samples_blocking, frequency
+        )
+
+    def _receive_samples_blocking(self, frequency: int) -> MetadataRecord:
         """
         Receives samples from the SDR at a specified frequency.
         """
