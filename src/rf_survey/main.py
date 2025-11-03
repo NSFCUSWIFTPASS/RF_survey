@@ -11,8 +11,8 @@ from rf_shared.logger import Logger
 from rf_shared.nats_client import NatsProducer
 
 from rf_survey.app import SurveyApp
-from rf_survey.config import settings
-from rf_survey.cli import parse_args
+from rf_survey.config import app_settings
+from rf_survey.cli import update_settings_from_args
 from rf_survey.receiver import Receiver
 from rf_survey.models import ApplicationInfo, SweepConfig, ReceiverConfig
 from rf_survey.watchdog import ApplicationWatchdog
@@ -29,30 +29,30 @@ async def run():
     except singleton.SingleInstanceException:
         sys.exit("Survey already running! Another process holds the lock file.")
 
-    args = parse_args()
+    settings = update_settings_from_args(app_settings)
 
     shutdown_event = asyncio.Event()
 
     app_info = ApplicationInfo(
         hostname=settings.HOSTNAME,
-        organization=args.organization,
-        coordinates=args.coordinates,
+        organization=settings.ORGANIZATION,
+        coordinates=settings.COORDINATES,
         output_path=Path(settings.STORAGE_PATH),
     )
 
     sweep_config = SweepConfig(
-        start_hz=args.frequency_start,
-        end_hz=args.frequency_end,
-        cycles=args.cycles,
-        records_per_step=args.records,
-        interval_sec=args.timer,
-        max_jitter_sec=args.jitter,
+        start_hz=settings.FREQUENCY_START,
+        end_hz=settings.FREQUENCY_END,
+        cycles=settings.CYCLES,
+        records_per_step=settings.RECORDS,
+        interval_sec=settings.TIMER,
+        max_jitter_sec=settings.JITTER,
     )
 
     receiver_config = ReceiverConfig(
-        bandwidth_hz=args.bandwidth,
-        gain_db=args.gain,
-        duration_sec=args.duration_sec,
+        bandwidth_hz=settings.BANDWIDTH,
+        gain_db=settings.GAIN,
+        duration_sec=settings.DURATION_SEC,
     )
 
     receiver = Receiver(
@@ -100,10 +100,10 @@ async def run():
     if zms_monitor:
         app.zms_monitor = zms_monitor
 
-    # If Zms is managing us do not start the survey until we receive
-    # an active state command, we could be initializing into a paused state
-    if isinstance(zms_monitor, ZmsMonitor):
-        await app.pause_survey()
+    # If Zms is not managing us signal the survey to start
+    # starts paused by default, ZMS will tell us to start
+    if not isinstance(zms_monitor, ZmsMonitor):
+        await app.start_survey()
 
     await app.run()
 
