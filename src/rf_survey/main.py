@@ -4,21 +4,23 @@
 
 import asyncio
 import sys
+from pathlib import Path
 from tendo import singleton
 
 from rf_shared.logger import Logger
 from rf_shared.nats_client import NatsProducer
 
 from rf_survey.app import SurveyApp
-from rf_survey.streamer import Streamer
-from rf_survey.heartbeat import (
-    HeartbeatManager,
-)
 from rf_survey.config import settings
 from rf_survey.cli import parse_args
+from rf_survey.receiver import Receiver
+from rf_survey.models import ApplicationInfo, SweepConfig, ReceiverConfig
+from rf_survey.watchdog import ApplicationWatchdog
+from rf_survey.monitor import ZmsMonitor, NullZmsMonitor
+from rf_survey.monitor_factory import initialize_zms_monitor
 
 
-def main():
+async def run():
     """
     Main application entry point.
     """
@@ -31,17 +33,31 @@ def main():
 
     shutdown_event = asyncio.Event()
 
-    streamer = Streamer(
-        num_samples=args.samples,
-        bandwidth_hz=args.bandwidth,
-        gain_db=args.gain,
-        interval_secs=args.timer,
-        max_jitter_secs=args.jitter,
+    app_info = ApplicationInfo(
         hostname=settings.HOSTNAME,
         organization=args.organization,
         coordinates=args.coordinates,
-        output_path=settings.STORAGE_PATH,
-        logger=Logger(name="streamer", log_level=settings.LOG_LEVEL),
+        output_path=Path(settings.STORAGE_PATH),
+    )
+
+    sweep_config = SweepConfig(
+        start_hz=args.frequency_start,
+        end_hz=args.frequency_end,
+        cycles=args.cycles,
+        records_per_step=args.records,
+        interval_sec=args.timer,
+        max_jitter_sec=args.jitter,
+    )
+
+    receiver_config = ReceiverConfig(
+        bandwidth_hz=args.bandwidth,
+        gain_db=args.gain,
+        duration_sec=args.duration_sec,
+    )
+
+    receiver = Receiver(
+        receiver_config=receiver_config,
+        logger=Logger(name="receiver", log_level=settings.LOG_LEVEL),
     )
 
     producer = NatsProducer(
@@ -55,24 +71,46 @@ def main():
         logger=Logger(name="nats_producer", log_level=settings.LOG_LEVEL),
     )
 
-    heartbeat_manager = HeartbeatManager.create(
-        monitor_guid=settings.MONITOR_GUID,
-        sample_interval=args.timer,
-        zmc_http=settings.ZMC_HTTP,
+    watchdog_timeout = args.timer + 10  # interval between samples + buffer
+    watchdog = ApplicationWatchdog(
+        timeout_seconds=watchdog_timeout,
         shutdown_event=shutdown_event,
-        logger=Logger("heartbeat", settings.LOG_LEVEL),
+        logger=Logger("watchdog", settings.LOG_LEVEL),
     )
 
     app = SurveyApp(
-        args=args,
+        app_info=app_info,
+        sweep_config=sweep_config,
         shutdown_event=shutdown_event,
-        streamer=streamer,
+        receiver=receiver,
         producer=producer,
-        heartbeat_manager=heartbeat_manager,
+        watchdog=watchdog,
+        zms_monitor=NullZmsMonitor(shutdown_event=shutdown_event),
         logger=Logger("rf_survey", settings.LOG_LEVEL),
     )
 
-    asyncio.run(app.run())
+    # If ZMS configuration is not provided
+    # returns None
+    zms_monitor = await initialize_zms_monitor(
+        settings=settings,
+        reconfiguration_callback=app.apply_zms_reconfiguration,
+        shutdown_event=shutdown_event,
+    )
+
+    # Check if we have Zms monitor enabled
+    if zms_monitor:
+        app.zms_monitor = zms_monitor
+
+    # If Zms is managing us do not start the survey until we receive
+    # an active state command, we could be initializing into a paused state
+    if isinstance(zms_monitor, ZmsMonitor):
+        await app.pause_survey()
+
+    await app.run()
+
+
+def main():
+    asyncio.run(run())
 
 
 if __name__ == "__main__":
