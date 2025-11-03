@@ -47,6 +47,8 @@ class SurveyApp:
         self._running_event = asyncio.Event()
         self._active_sweep_task: Optional[asyncio.Task] = None
 
+        self._processing_queue = asyncio.Queue(maxsize=32)
+
     def _signal_handler(self):
         """Sets the shutdown event when a signal is received."""
         if not self.shutdown_event.is_set():
@@ -85,12 +87,19 @@ class SurveyApp:
                 loop.add_signal_handler(sig, self._signal_handler)
 
             survey_task = asyncio.create_task(self._survey_runner())
+            processing_task = asyncio.create_task(self._processing_worker())
             monitor_task = asyncio.create_task(self.zms_monitor.run())
             watchdog_task = asyncio.create_task(self.watchdog.run())
             shutdown_waiter_task = asyncio.create_task(self.shutdown_event.wait())
 
             all_tasks.extend(
-                [survey_task, monitor_task, watchdog_task, shutdown_waiter_task]
+                [
+                    processing_task,
+                    survey_task,
+                    monitor_task,
+                    watchdog_task,
+                    shutdown_waiter_task,
+                ]
             )
 
             await asyncio.wait(all_tasks, return_when=asyncio.FIRST_COMPLETED)
@@ -149,8 +158,14 @@ class SurveyApp:
                 # In a running state. Create the sweep as a new task
                 # and store a reference to it so it can be cancelled externally.
                 self.logger.info("Starting a new sweep task.")
+
+                # Create copies to communicate down to task the state
+                # for this task
+                receiver_config_snapshot = deepcopy(self.receiver.config)
+                sweep_config_snapshot = deepcopy(self.sweep_config)
+
                 self._active_sweep_task = asyncio.create_task(
-                    self._perform_sweep(self.sweep_config)
+                    self._perform_sweep(sweep_config_snapshot, receiver_config_snapshot)
                 )
 
                 try:
@@ -183,13 +198,15 @@ class SurveyApp:
 
             self.logger.info("Survey runner supervisor has shut down.")
 
-    async def _perform_sweep(self, sweep_config: SweepConfig):
+    async def _perform_sweep(
+        self, sweep_config: SweepConfig, receiver_config: ReceiverConfig
+    ):
         """
         Performs a single sweep across the specified frequency range.
         """
         center_hz = sweep_config.start_hz
         end_hz = sweep_config.end_hz
-        step_hz = self.receiver.config.bandwidth_hz
+        step_hz = receiver_config.bandwidth_hz
 
         while center_hz <= end_hz and not self.shutdown_event.is_set():
             try:
@@ -202,36 +219,98 @@ class SurveyApp:
                     if self.shutdown_event.is_set():
                         break
 
-                    receiver_config_snapshot = deepcopy(self.receiver.config)
-                    sweep_config_snapshot = deepcopy(sweep_config)
-
+                    # Get the samples from receiver
                     raw_capture = await self.receiver.receive_samples(center_hz)
 
                     if raw_capture is None:
                         continue
 
+                    # Create a processing job
                     job = ProcessingJob(
                         raw_capture=raw_capture,
-                        receiver_config_snapshot=receiver_config_snapshot,
-                        sweep_config_snapshot=sweep_config_snapshot,
+                        receiver_config_snapshot=receiver_config,
+                        sweep_config_snapshot=sweep_config,
                     )
 
-                    metadata_record = await self._process_capture_job(job)
-                    await self.producer.publish_metadata(metadata_record)
-
                     await self.watchdog.pet()
+
+                    try:
+                        # Send job to processing task
+                        await asyncio.wait_for(
+                            self._processing_queue.put(job), timeout=1.0
+                        )
+                        self.logger.debug(
+                            "Successfully queued capture job for processing."
+                        )
+                    except asyncio.TimeoutError:
+                        self.logger.error(
+                            "Processing queue is full! The system is backlogged. Dropping capture."
+                        )
+                        continue
 
             except asyncio.CancelledError:
                 raise
 
             except Exception as e:
-                # This is a transient error for a single frequency step.
+                # This is a transient error for a single frequency step
                 self.logger.error(f"Failed to perform capture at {center_hz} Hz: {e}")
                 self.logger.warning(
                     "Skipping this frequency step and continuing sweep."
                 )
 
             center_hz += step_hz
+
+    async def _processing_worker(self):
+        """
+        A consumer task that pulls capture jobs from a queue and
+        processes them.
+        """
+        self.logger.info("Processing worker started.")
+
+        try:
+            while not self.shutdown_event.is_set():
+                try:
+                    # Get job from the queue
+                    job = await asyncio.wait_for(
+                        self._processing_queue.get(), timeout=1.0
+                    )
+
+                    # Process the job
+                    await self._process_single_job(job)
+
+                except asyncio.TimeoutError:
+                    continue
+                except asyncio.CancelledError:
+                    raise
+
+        except asyncio.CancelledError:
+            self.logger.info("Processing worker received cancellation signal.")
+
+        finally:
+            self.logger.info(
+                f"Processing worker shutting down. Draining {self._processing_queue.qsize()} remaining jobs..."
+            )
+            # Drain the remaining jobs... Might be overkill
+            while not self._processing_queue.empty():
+                job = self._processing_queue.get_nowait()
+                self.logger.info("Processing one final job before exit...")
+                await self._process_single_job(job)
+
+            self.logger.info("Processing queue is empty. Worker finished.")
+
+    async def _process_single_job(self, job: ProcessingJob):
+        """
+        Helper function to process one job.
+        """
+        try:
+            self.logger.debug(
+                f"Processing job for capture at {job.raw_capture.center_freq_hz} Hz..."
+            )
+            metadata_record = await self._process_capture_job(job)
+            await self.producer.publish_metadata(metadata_record)
+            self.logger.debug("Processing job finished successfully.")
+        except Exception as e:
+            self.logger.error(f"Failed to process capture job: {e}", exc_info=True)
 
     async def _process_capture_job(self, job: ProcessingJob) -> MetadataRecord:
         loop = asyncio.get_running_loop()
