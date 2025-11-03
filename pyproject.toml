@@ -14,6 +14,7 @@ dependencies = [
     "pydantic==2.12.0",
     "pydantic-settings==2.11.0",
     "rf-shared @ git+https://github.com/NSFCUSWIFTPASS/rf-shared.git@v0.1.0",
+    "zms-client @ git+https://gitlab.flux.utah.edu/openzms/zms-client-py.git@fd4a5a0902bfe91fad0112c75bf1eb1723d6098d"
 ]
 
 [project.urls]
@@ -43,7 +44,7 @@ dependencies = [
 run = "pytest {args:tests}"
 
 [[tool.hatch.envs.test.matrix]]
-python = ["3.11", "3.12"]
+python = ["3.11"]
 
 [tool.hatch.envs.ci]
 template = "test"
