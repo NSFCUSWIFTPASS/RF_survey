@@ -1,21 +1,26 @@
 import random
 from dataclasses import dataclass, field
 from pathlib import Path
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, model_validator
 from uuid import uuid4
 from datetime import datetime
 
 from rf_survey.utils.scheduler import calculate_wait_time
 
 
-@dataclass
-class SweepConfig:
+class SweepConfig(BaseModel):
     start_hz: int
     end_hz: int
     cycles: int
     records_per_step: int
     interval_sec: int
     max_jitter_sec: float
+
+    @model_validator(mode="after")
+    def end_must_be_gte_start(self) -> "SweepConfig":
+        if self.end_hz < self.start_hz:
+            raise ValueError("end_hz cannot be less than start_hz")
+        return self
 
     def next_collection_wait_duration(self) -> float:
         """
@@ -30,11 +35,10 @@ class SweepConfig:
         return base_wait_duration + jitter_duration
 
 
-@dataclass
-class ReceiverConfig:
-    bandwidth_hz: int
-    gain_db: int
-    duration_sec: float
+class ReceiverConfig(BaseModel):
+    gain_db: int = Field(..., ge=0, le=76)
+    bandwidth_hz: int = Field(..., gt=0)
+    duration_sec: float = Field(..., gt=0)
 
     @property
     def num_samples(self) -> int:
