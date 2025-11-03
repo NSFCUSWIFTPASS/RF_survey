@@ -48,11 +48,11 @@ def parse_args():
         help="Bandwidth in Hz (e.g., 2e6)",
     )
     required.add_argument(
-        "-s",
-        "--samples",
+        "-d",
+        "--duration_sec",
         type=positive_int_float,
         required=True,
-        help="Total number of samples",
+        help="Capture duration in seconds.",
     )
     required.add_argument(
         "-g", "--gain", type=gain_check, required=True, help="Receive gain in dB (0-76)"
@@ -100,19 +100,6 @@ def parse_args():
             "jitter of 0.1s is used. Optionally, provide a value for a different "
             "max jitter (e.g., -j 0.5)."
         ),
-    )
-    parser.add_argument(
-        "-d",
-        "--delay",
-        type=float,
-        default=0,
-        help="Execute the script [x] seconds in the future",
-    )
-    parser.add_argument(
-        "-rs",
-        "--seed",
-        type=int,
-        help="only used when activating multiple devices through the GUI",
     )
 
     args = parser.parse_args()
