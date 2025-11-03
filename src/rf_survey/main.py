@@ -71,9 +71,8 @@ async def run():
         logger=Logger(name="nats_producer", log_level=settings.LOG_LEVEL),
     )
 
-    watchdog_timeout = args.timer + 10  # interval between samples + buffer
     watchdog = ApplicationWatchdog(
-        timeout_seconds=watchdog_timeout,
+        timeout_seconds=30,
         shutdown_event=shutdown_event,
         logger=Logger("watchdog", settings.LOG_LEVEL),
     )
