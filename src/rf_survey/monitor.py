@@ -24,7 +24,6 @@ from zmsclient.zmc.v1.models import (
 from rf_survey.commands import (
     MonitorCommand,
     ProcessReconfigurationCommand,
-    PetWatchdogCommand,
 )
 from rf_survey.zms_event_subscriber import ZmsEventSubscriber
 from rf_survey.types import ReconfigurationCallback
@@ -51,6 +50,8 @@ class ZmsMonitor:
     def __init__(
         self,
         monitor_id: str,
+        element_id: str,
+        user_id: str,
         zmc_client: ZmsZmcClientAsyncio,
         reconfiguration_callback: ReconfigurationCallback,
         shutdown_event: asyncio.Event,
@@ -64,6 +65,8 @@ class ZmsMonitor:
         self.reconfiguration_callback = reconfiguration_callback
 
         self.monitor_id = monitor_id
+        self.user_id = user_id
+        self.element_id = element_id
 
         # State managed by the loop
         self._op_status: MonitorOpStatus = MonitorOpStatus.ACTIVE
@@ -216,7 +219,7 @@ class ZmsMonitor:
         self.logger.info("Starting WebSocket listener...")
 
         try:
-            filter = EventFilter(element_ids=["9db00a7b-bce8-4d8e-acca-566ad324d08c"])
+            filter = EventFilter(element_ids=[self.element_id], user_ids=[self.user_id])
             subscription_config = Subscription(id=str(uuid.uuid4()), filters=[filter])
 
             adapter = ZmsEventAdapter(
