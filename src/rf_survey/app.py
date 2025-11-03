@@ -306,9 +306,12 @@ class SurveyApp:
             self.logger.debug(
                 f"Processing job for capture at {job.raw_capture.center_freq_hz} Hz..."
             )
+
             metadata_record = await self._process_capture_job(job)
             await self.producer.publish_metadata(metadata_record)
+
             self.logger.debug("Processing job finished successfully.")
+
         except Exception as e:
             self.logger.error(f"Failed to process capture job: {e}", exc_info=True)
 
