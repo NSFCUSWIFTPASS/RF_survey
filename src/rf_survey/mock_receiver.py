@@ -24,7 +24,7 @@ class Receiver:
         self._hardware_lock = None
         self.serial = "MOCK-SERIAL-123"
         self.hostname = "mock-host"  # Needed for processing step
-        self.logger.info("--- MockReceiver initialized ---")
+        self.logger.info("--- MockReceiver created ---")
         self.logger.info(f"Initial configuration: {self.config}")
 
     def initialize(self) -> None:
