@@ -10,6 +10,7 @@ class ZmsSettings:
     """Data structure for ZMS/ZMC heartbeat service configuration."""
 
     zmc_http: str
+    identity_http: str
     token: SecretStr
     monitor_id: str
     monitor_schema_path: str
@@ -26,6 +27,7 @@ class AppSettings(BaseSettings):
     LOG_LEVEL: str = "INFO"
 
     ZMS_ZMC_HTTP: str | None = None
+    ZMS_IDENTITY_HTTP: str | None = None
     ZMS_TOKEN: SecretStr | None = None
     ZMS_MONITOR_ID: str | None = None
     ZMS_MONITOR_SCHEMA_PATH: str | None = None
@@ -61,12 +63,14 @@ class AppSettings(BaseSettings):
         """
         if (
             self.ZMS_ZMC_HTTP
+            and self.ZMS_IDENTITY_HTTP
             and self.ZMS_TOKEN
             and self.ZMS_MONITOR_ID
             and self.ZMS_MONITOR_SCHEMA_PATH
         ):
             return ZmsSettings(
                 zmc_http=self.ZMS_ZMC_HTTP,
+                identity_http=self.ZMS_IDENTITY_HTTP,
                 token=self.ZMS_TOKEN,
                 monitor_id=self.ZMS_MONITOR_ID,
                 monitor_schema_path=self.ZMS_MONITOR_SCHEMA_PATH,
