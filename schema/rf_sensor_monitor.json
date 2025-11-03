@@ -1,0 +1,50 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "properties": {
+        "gain_db": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 76,
+            "description": "RX Gain in dB. Valid range for B200/B210 is 0-76 dB."
+        },
+        "duration_sec": {
+            "type": "number",
+            "minimum": 0.01,
+            "maximum": 10.0,
+            "description": "Capture duration in seconds for each frequency step."
+        },
+        "bandwidth_hz": {
+            "type": "integer",
+            "minimum": 200000,
+            "maximum": 56000000,
+            "description": "Instantaneous bandwidth in Hz, which also defines the sweep step size. Max for B200/B210 is 56 MHz."
+        },
+        "start_freq_hz": {
+            "type": "integer",
+            "minimum": 70000000,
+            "maximum": 6000000000,
+            "description": "Sweep start frequency in Hz. B200/B210 range is 70 MHz to 6 GHz."
+        },
+        "end_freq_hz": {
+            "type": "integer",
+            "minimum": 70000000,
+            "maximum": 6000000000,
+            "description": "Sweep end frequency in Hz. Must be >= start_freq_hz."
+        },
+        "sample_interval": {
+            "type": "number",
+            "minimum": 0.5,
+            "maximum": 10.0,
+            "description": "Time in seconds between the start of consecutive captures."
+        }
+    },
+    "required": [
+        "gain_db",
+        "duration_sec",
+        "bandwidth_hz",
+        "start_freq_hz",
+        "end_freq_hz",
+        "sample_interval"
+    ]
+}
