@@ -100,56 +100,59 @@ class Receiver:
         """
         assert self.rx_streamer is not None, "Streamer not properly initialized"
 
-        # Set frequency for current loop step
-        self.usrp.set_rx_freq(uhd.libpyuhd.types.tune_request(center_freq_hz), 0)
+        with self._hardware_lock:
+            # Set frequency for current loop step
+            self.usrp.set_rx_freq(uhd.libpyuhd.types.tune_request(center_freq_hz), 0)
 
-        samples_to_collect = self.config.num_samples
-        capture_buffer = np.zeros(samples_to_collect, dtype=np.int32)
-        rx_metadata = uhd.types.RXMetadata()
+            samples_to_collect = self.config.num_samples
+            capture_buffer = np.zeros(samples_to_collect, dtype=np.int32)
+            rx_metadata = uhd.types.RXMetadata()
 
-        # Wait for lo to settle instead of over sampling and discarding a margin
-        self._wait_for_settle_lo()
+            # Wait for lo to settle instead of over sampling and discarding a margin
+            self._wait_for_settle_lo()
 
-        stream_cmd = uhd.types.StreamCMD(uhd.types.StreamMode.num_done)
-        stream_cmd.num_samps = samples_to_collect
-        stream_cmd.stream_now = True
-        self.rx_streamer.issue_stream_cmd(stream_cmd)
+            stream_cmd = uhd.types.StreamCMD(uhd.types.StreamMode.num_done)
+            stream_cmd.num_samps = samples_to_collect
+            stream_cmd.stream_now = True
+            self.rx_streamer.issue_stream_cmd(stream_cmd)
 
-        try:
-            # Use a timeout slightly longer than the expected capture duration
-            timeout = self.config.duration_sec + 2.0
+            try:
+                # Use a timeout slightly longer than the expected capture duration
+                timeout = self.config.duration_sec + 2.0
 
-            start_recv = time.monotonic()
-            samples_received = self.rx_streamer.recv(
-                capture_buffer, rx_metadata, timeout=timeout
+                start_recv = time.monotonic()
+                samples_received = self.rx_streamer.recv(
+                    capture_buffer, rx_metadata, timeout=timeout
+                )
+                recv_duration = time.monotonic() - start_recv
+
+                self.logger.info(
+                    f"recv() call returned after {recv_duration:.3f} seconds."
+                )
+
+            except RuntimeError as e:
+                self.logger.error(f"A UHD recv error occurred: {e}", exc_info=True)
+                raise
+
+            if rx_metadata.error_code != uhd.types.RXMetadataErrorCode.none:
+                raise RuntimeError(
+                    f"UHD recv completed with error: {rx_metadata.strerror()}"
+                )
+
+            if samples_received < samples_to_collect:
+                raise RuntimeError(
+                    f"Capture truncated: expected {samples_to_collect}, received {samples_received}"
+                )
+
+            capture_timestamp = self._get_timestamp(rx_metadata)
+
+            raw_capture = RawCapture(
+                iq_data_bytes=capture_buffer.tobytes(),
+                center_freq_hz=center_freq_hz,
+                capture_timestamp=capture_timestamp,
             )
-            recv_duration = time.monotonic() - start_recv
 
-            self.logger.info(f"recv() call returned after {recv_duration:.3f} seconds.")
-
-        except RuntimeError as e:
-            self.logger.error(f"A UHD recv error occurred: {e}", exc_info=True)
-            raise
-
-        if rx_metadata.error_code != uhd.types.RXMetadataErrorCode.none:
-            raise RuntimeError(
-                f"UHD recv completed with error: {rx_metadata.strerror()}"
-            )
-
-        if samples_received < samples_to_collect:
-            raise RuntimeError(
-                f"Capture truncated: expected {samples_to_collect}, received {samples_received}"
-            )
-
-        capture_timestamp = self._get_timestamp(rx_metadata)
-
-        raw_capture = RawCapture(
-            iq_data_bytes=capture_buffer.tobytes(),
-            center_freq_hz=center_freq_hz,
-            capture_timestamp=capture_timestamp,
-        )
-
-        return raw_capture
+            return raw_capture
 
     def _get_timestamp(self, rx_metadata: uhd.types.RXMetadata) -> datetime:
         # Get timestamp from rx_metadata if possible
