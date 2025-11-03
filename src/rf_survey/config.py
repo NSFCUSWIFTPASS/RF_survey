@@ -19,18 +19,29 @@ class ZmsSettings:
 class AppSettings(BaseSettings):
     """Application settings, loaded from environment variables with an RF_ prefix."""
 
+    FREQUENCY_START: int = 915_000_000
+    FREQUENCY_END: int = 915_000_000
+    BANDWIDTH: int = 20_000_000
+    DURATION_SEC: float = 1.0
+    GAIN: int = 35
+    ORGANIZATION: str = "DefaultOrg"
+    COORDINATES: str = "0.0N,0.0W"
+    RECORDS: int = 1
+    CYCLES: int = 1
+    TIMER: int = 10
+    JITTER: float = 0.0
+
     NATS_HOST: str = "localhost"
     NATS_PORT: int = 4222
-    NATS_TOKEN: SecretStr | None = None
-
-    STORAGE_PATH: str
+    NATS_TOKEN: Optional[SecretStr] = None
+    STORAGE_PATH: str = "/tmp"
     LOG_LEVEL: str = "INFO"
 
-    ZMS_ZMC_HTTP: str | None = None
-    ZMS_IDENTITY_HTTP: str | None = None
-    ZMS_TOKEN: SecretStr | None = None
-    ZMS_MONITOR_ID: str | None = None
-    ZMS_MONITOR_SCHEMA_PATH: str | None = None
+    ZMS_ZMC_HTTP: Optional[str] = None
+    ZMS_IDENTITY_HTTP: Optional[str] = None
+    ZMS_TOKEN: Optional[SecretStr] = None
+    ZMS_MONITOR_ID: Optional[str] = None
+    ZMS_MONITOR_SCHEMA_PATH: Optional[str] = None
 
     HOSTNAME: str = Field(default_factory=socket.gethostname)
 
@@ -78,4 +89,4 @@ class AppSettings(BaseSettings):
         return None
 
 
-settings = AppSettings()
+app_settings = AppSettings()
