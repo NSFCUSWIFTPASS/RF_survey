@@ -46,6 +46,7 @@ class AppSettings(BaseSettings):
     HOSTNAME: str = Field(default_factory=socket.gethostname)
 
     model_config = SettingsConfigDict(
+        extra="allow",
         env_prefix="RF_",
         env_file=".env",
         env_file_encoding="utf-8",
