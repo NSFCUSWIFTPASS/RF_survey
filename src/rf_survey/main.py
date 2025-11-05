@@ -6,6 +6,7 @@ import asyncio
 import sys
 from pathlib import Path
 from tendo import singleton
+import signal
 
 from rf_shared.logger import Logger
 from rf_shared.nats_client import NatsProducer
@@ -13,7 +14,7 @@ from rf_shared.nats_client import NatsProducer
 from rf_survey.app import SurveyApp
 from rf_survey.config import app_settings
 from rf_survey.cli import update_settings_from_args
-from rf_survey.mock_receiver import Receiver
+from rf_survey.receiver import Receiver
 from rf_survey.models import ApplicationInfo, SweepConfig, ReceiverConfig
 from rf_survey.watchdog import ApplicationWatchdog
 from rf_survey.monitor import ZmsMonitor, NullZmsMonitor
@@ -29,9 +30,20 @@ async def run():
     except singleton.SingleInstanceException:
         sys.exit("Survey already running! Another process holds the lock file.")
 
-    settings = update_settings_from_args(app_settings)
-
+    loop = asyncio.get_running_loop()
+    main_task = asyncio.current_task()
     shutdown_event = asyncio.Event()
+
+    def signal_handler():
+        print("\nShutdown signal received. Cancelling all tasks...")
+        if main_task and not main_task.done():
+            shutdown_event.set()
+            main_task.cancel()
+
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        loop.add_signal_handler(sig, signal_handler)
+
+    settings = update_settings_from_args(app_settings)
 
     app_info = ApplicationInfo(
         hostname=settings.HOSTNAME,
@@ -73,18 +85,17 @@ async def run():
 
     watchdog = ApplicationWatchdog(
         timeout_seconds=30,
-        shutdown_event=shutdown_event,
         logger=Logger("watchdog", settings.LOG_LEVEL),
     )
 
     app = SurveyApp(
+        shutdown_event=shutdown_event,
         app_info=app_info,
         sweep_config=sweep_config,
-        shutdown_event=shutdown_event,
         receiver=receiver,
         producer=producer,
         watchdog=watchdog,
-        zms_monitor=NullZmsMonitor(shutdown_event=shutdown_event),
+        zms_monitor=NullZmsMonitor(),
         logger=Logger("rf_survey", settings.LOG_LEVEL),
     )
 
@@ -93,10 +104,9 @@ async def run():
     zms_monitor = await initialize_zms_monitor(
         settings=settings,
         reconfiguration_callback=app.apply_zms_reconfiguration,
-        shutdown_event=shutdown_event,
     )
 
-    # Check if we have Zms monitor enabled
+    ## Check if we have Zms monitor enabled
     if zms_monitor:
         app.zms_monitor = zms_monitor
 
