@@ -54,10 +54,8 @@ class ZmsMonitor:
         user_id: str,
         zmc_client: ZmsZmcClientAsyncio,
         reconfiguration_callback: ReconfigurationCallback,
-        shutdown_event: asyncio.Event,
         logger: ILogger,
     ):
-        self.shutdown_event = shutdown_event
         self._status_queue = asyncio.Queue()
         self._command_queue = asyncio.Queue()
         self.logger = logger
@@ -83,7 +81,6 @@ class ZmsMonitor:
             # Check Zms for our monitor state and send initial heartbeat
             if not await self._initialize_state():
                 self.logger.error("Failed to initialize monitor state. Shutting down.")
-                self.shutdown_event.set()
                 return
 
             async with asyncio.TaskGroup() as monitor_tg:
@@ -91,17 +88,13 @@ class ZmsMonitor:
                 monitor_tg.create_task(self._event_listener_loop())
 
         except asyncio.CancelledError:
-            # --- THIS IS THE CRITICAL FIX ---
-            # This block will now catch the cancellation from the parent supervisor.
-            # This allows the 'async with monitor_tg' to finish its cleanup
-            # of the child tasks gracefully.
-            self.logger.info("ZmsMonitor task was cancelled.")
+            self.logger.info("Monitor task cancelled.")
 
         except Exception as e:
             self.logger.critical(
                 f"A critical error occurred in ZmsMonitor: {e}", exc_info=True
             )
-            self.shutdown_event.set()
+            raise
 
         finally:
             self.logger.info("ZmsMonitor has shut down.")
@@ -178,61 +171,49 @@ class ZmsMonitor:
 
     async def _state_machine_loop(self):
         """The main loop that waits for commands or heartbeat timeouts."""
-        while not self.shutdown_event.is_set():
-            try:
-                time_until_ack_by: Optional[float] = None
+        try:
+            while True:
+                try:
+                    time_until_ack_by: Optional[float] = None
 
-                # Determine the deadline for the next heartbeat
-                if self._status_ack_by:
-                    now = datetime.now(timezone.utc)
-                    if self._status_ack_by > now:
-                        time_until_ack_by = (self._status_ack_by - now).total_seconds()
-                    else:
-                        self.logger.warning(
-                            "Heartbeat deadline is in the past! Sending immediately."
-                        )
-                        time_until_ack_by = 0
+                    # Determine the deadline for the next heartbeat
+                    if self._status_ack_by:
+                        now = datetime.now(timezone.utc)
+                        if self._status_ack_by > now:
+                            time_until_ack_by = (
+                                self._status_ack_by - now
+                            ).total_seconds()
+                        else:
+                            self.logger.warning(
+                                "Heartbeat deadline is in the past! Sending immediately."
+                            )
+                            time_until_ack_by = 0
 
-                get_command_task = asyncio.create_task(self._command_queue.get())
-                shutdown_task = asyncio.create_task(self.shutdown_event.wait())
-
-                tasks_to_wait_on = [get_command_task, shutdown_task]
-
-                done, pending = await asyncio.wait(
-                    tasks_to_wait_on,
-                    timeout=time_until_ack_by,
-                    return_when=asyncio.FIRST_COMPLETED,
-                )
-
-                for task in pending:
-                    task.cancel()
-
-                if shutdown_task in done:
-                    # The shutdown event was set. This is our highest priority signal.
-                    self.logger.info(
-                        "State machine received shutdown signal. Exiting loop."
+                    command = await asyncio.wait_for(
+                        self._command_queue.get(), timeout=time_until_ack_by
                     )
-                    break
 
-                elif get_command_task in done:
-                    # A command arrived in the queue.
-                    command = get_command_task.result()
+                    # If we get here, a command was received before the timeout.
                     await self._process_command(command)
-                    # Loop back to the top to wait for the next event.
-                    continue
 
-                else:  # This block runs if 'done' is empty, which means we timed out.
+                except asyncio.TimeoutError:
+                    # This is the expected outcome when the heartbeat timer expires.
                     self.logger.debug("Heartbeat interval expired. Sending heartbeat.")
                     await self._send_heartbeat()
 
-            except Exception as e:
-                self.logger.error(
-                    f"Error in state machine loop: {e}. Retrying in 10s.", exc_info=True
-                )
-                await asyncio.sleep(10)
+                except Exception as e:
+                    # Prevents a single bad command from crashing the whole monitor.
+                    self.logger.error(
+                        f"Error in state machine loop iteration: {e}. Retrying in 10s.",
+                        exc_info=True,
+                    )
+                    await asyncio.sleep(10)
 
-            finally:
-                self.logger.info("State machine loop has shut down.")
+        except asyncio.CancelledError:
+            self.logger.info("State machine loop was cancelled.")
+
+        finally:
+            self.logger.info("State machine loop has shut down.")
 
     async def _event_listener_loop(self):
         self.logger.info("Starting WebSocket listener...")
@@ -251,11 +232,13 @@ class ZmsMonitor:
 
             await adapter.run_async()
 
+        except asyncio.CancelledError:
+            self.logger.info("Event listener loop was cancelled.")
+
         except Exception as e:
             self.logger.critical(
                 f"WebSocket listener failed critically: {e}", exc_info=True
             )
-            self.shutdown_event.set()
 
     async def _process_command(self, command: MonitorCommand):
         self.logger.debug(f"Received COMMAND: {command}")
@@ -436,18 +419,18 @@ class ZmsEventAdapter(ZmsEventSubscriber):
 
 
 class NullZmsMonitor:
-    def __init__(
-        self,
-        shutdown_event: asyncio.Event,
-    ):
+    def __init__(self):
         """
         A do-nothing ZmsMonitor that satisfies the interface.
         Used for when the rf-survey application is ran in standalone.
         """
-        self.shutdown_event = shutdown_event
 
     async def run(self) -> None:
         """
         The run method does nothing but wait for the application to shut down.
         """
-        await self.shutdown_event.wait()
+        while True:
+            try:
+                await asyncio.sleep(10)
+            except asyncio.CancelledError:
+                pass
