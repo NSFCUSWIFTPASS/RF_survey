@@ -11,7 +11,7 @@ from zmsclient.zmc.v1.models import MonitorStatus
 
 from rf_survey.models import ReceiverConfig, SweepConfig, ApplicationInfo, ProcessingJob
 from rf_survey.monitor import IZmsMonitor
-from rf_survey.mock_receiver import Receiver
+from rf_survey.receiver import Receiver
 from rf_survey.validators import ZmsReconfigurationParams
 from rf_survey.watchdog import ApplicationWatchdog
 
@@ -113,6 +113,7 @@ class SurveyApp:
                     )
                     break
 
+                # Primary pausing mechanisim
                 await self._running_event.wait()
 
                 self.logger.info("Starting a new sweep task.")
