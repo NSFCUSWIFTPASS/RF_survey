@@ -14,11 +14,9 @@ class ApplicationWatchdog:
     def __init__(
         self,
         timeout_seconds: Optional[float],
-        shutdown_event: asyncio.Event,
         logger: ILogger,
     ):
         self.timeout_seconds = timeout_seconds
-        self.shutdown_event = shutdown_event
         self.logger = logger
 
         # Internal state
@@ -39,35 +37,31 @@ class ApplicationWatchdog:
             f"Application watchdog started with a {self.timeout_seconds:.2f}s timeout."
         )
 
-        # Check the timer at a reasonable interval, e.g., every 5 seconds.
         check_interval_secs = 5.0
 
-        while not self.shutdown_event.is_set():
-            try:
-                await asyncio.wait_for(
-                    self.shutdown_event.wait(), timeout=check_interval_secs
-                )
-                # If we get here, shutdown was signaled. Break the loop.
-                break
-            except asyncio.TimeoutError:
-                pass
+        try:
+            while True:
+                await asyncio.sleep(check_interval_secs)
 
-            async with self._lock:
-                if self._is_paused:
-                    self.logger.debug("Watchdog is paused. Skipping liveness check.")
-                    continue
+                async with self._lock:
+                    if self._is_paused:
+                        self.logger.debug(
+                            "Watchdog is paused. Skipping liveness check."
+                        )
+                        continue
 
-                time_since_last_pet = time.monotonic() - self._last_pet_time
+                    time_since_last_pet = time.monotonic() - self._last_pet_time
 
-                if time_since_last_pet > self.timeout_seconds:
-                    self.logger.critical(
-                        f"WATCHDOG TIMEOUT: Application has not been pet in {time_since_last_pet:.2f}s "
-                        f"(limit: {self.timeout_seconds:.2f}s). Initiating graceful shutdown."
-                    )
-                    self.shutdown_event.set()
-                    break
+                    if time_since_last_pet > self.timeout_seconds:
+                        self.logger.critical(
+                            f"WATCHDOG TIMEOUT: Application has not been pet in {time_since_last_pet:.2f}s "
+                            f"(limit: {self.timeout_seconds:.2f}s). Initiating graceful shutdown."
+                        )
+        except asyncio.CancelledError:
+            self.logger.info("Watchdog was cancelled.")
 
-        self.logger.info("Application watchdog is shutting down.")
+        finally:
+            self.logger.info("Application watchdog is shutting down.")
 
     async def pet(self):
         """
