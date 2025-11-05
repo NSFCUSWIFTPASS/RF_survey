@@ -7,7 +7,7 @@ from copy import deepcopy
 from rf_shared.nats_client import NatsProducer
 from rf_shared.interfaces import ILogger
 from rf_shared.checksum import get_checksum
-from rf_shared.models import MetadataRecord
+from rf_shared.models import MetadataRecord, Envelope
 from zmsclient.zmc.v1.models import MonitorStatus
 
 from rf_survey.models import ReceiverConfig, SweepConfig, ApplicationInfo, ProcessingJob
@@ -308,7 +308,7 @@ class SurveyApp:
             )
 
             metadata_record = await self._process_capture_job(job)
-            await self.producer.publish_metadata(metadata_record)
+            await self.publish_metadata(metadata_record)
 
             self.logger.debug("Processing job finished successfully.")
 
@@ -371,6 +371,12 @@ class SurveyApp:
         )
 
         return metadata_record
+
+    async def publish_metadata(self, record: MetadataRecord) -> None:
+        envelope = Envelope.from_metadata(record)
+        payload = envelope.model_dump_json().encode()
+
+        await self.producer.publish(payload)
 
     async def _wait_until_next_collection(self, wait_duration: float) -> None:
         try:
