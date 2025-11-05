@@ -116,7 +116,7 @@ class SurveyApp:
                 # Primary pausing mechanisim
                 await self._running_event.wait()
 
-                self.logger.info("Starting a new sweep task.")
+                self.logger.debug("Starting a new sweep task.")
                 receiver_config_snapshot = deepcopy(self.receiver.config)
                 sweep_config_snapshot = deepcopy(self.sweep_config)
 
@@ -143,7 +143,7 @@ class SurveyApp:
                 else:
                     # This runs only if the sweep completed successfully.
                     cycles_run += 1
-                    self.logger.info("Sweep task completed successfully.")
+                    self.logger.debug("Sweep task completed successfully.")
 
                 finally:
                     self._active_sweep_task = None
@@ -296,7 +296,7 @@ class SurveyApp:
             raise
 
         file_checksum = get_checksum(raw_capture.iq_data_bytes)
-        self.logger.info(f"Calculated checksum: {file_checksum}")
+        self.logger.debug(f"Calculated checksum: {file_checksum}")
 
         metadata_record = MetadataRecord(
             # Static application info
@@ -323,6 +323,7 @@ class SurveyApp:
         return metadata_record
 
     async def publish_metadata(self, record: MetadataRecord) -> None:
+        self.logger.info(f"Publishing metadata: {record}")
         envelope = Envelope.from_metadata(record)
         payload = envelope.model_dump_json().encode()
 

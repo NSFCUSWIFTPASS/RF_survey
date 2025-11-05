@@ -89,36 +89,42 @@ class ZmsEventSubscriber:
         """
         self.logger.info("ZMS Event Subscriber starting...")
         try:
-            async with self._subscription_manager() as sub_id:
-                while True:
-                    try:
+            while True:
+                try:
+                    async with self._subscription_manager() as sub_id:
                         await self._listen_for_events(sub_id)
 
                         self.logger.info(
                             "WebSocket connection closed cleanly by the server."
                         )
 
-                    except (
-                        ConnectionClosed,
-                        ConnectionClosedError,
-                        ConnectionClosedOK,
-                    ) as e:
-                        self.logger.warning(
-                            f"WebSocket connection lost: {type(e).__name__}. Preparing to reconnect."
-                        )
-                    except Exception as e:
-                        # A more serious, unexpected error.
-                        self.logger.error(
-                            f"An unexpected error occurred in the listener: {e}",
-                            exc_info=True,
-                        )
+                except (
+                    ConnectionClosed,
+                    ConnectionClosedError,
+                    ConnectionClosedOK,
+                ) as e:
+                    self.logger.warning(
+                        f"WebSocket connection lost: {type(e).__name__}. Preparing to reconnect."
+                    )
 
-                    if not self.reconnect_on_error:
-                        self.logger.info("Reconnect is disabled. Exiting.")
-                        break
+                except Exception as e:
+                    self.logger.error(
+                        f"An unexpected error occurred in the listener: {e}",
+                        exc_info=True,
+                    )
 
+                if not self.reconnect_on_error:
+                    self.logger.info("Reconnect is disabled. Exiting.")
+                    break
+
+                try:
                     self.logger.info("Attempting to reconnect in 10 seconds...")
                     await asyncio.sleep(10)
+                except asyncio.CancelledError:
+                    self.logger.info(
+                        "Reconnect wait was cancelled. Shutting down loop."
+                    )
+                    break
 
         except asyncio.CancelledError:
             self.logger.info(
