@@ -120,6 +120,8 @@ class Receiver:
                 # Use a timeout slightly longer than the expected capture duration
                 timeout = self.config.duration_sec + 2.0
 
+                capture_timestamp = datetime.now(timezone.utc)
+
                 start_recv = time.monotonic()
                 samples_received = self.rx_streamer.recv(
                     capture_buffer, rx_metadata, timeout=timeout
@@ -144,7 +146,8 @@ class Receiver:
                     f"Capture truncated: expected {samples_to_collect}, received {samples_received}"
                 )
 
-            capture_timestamp = self._get_timestamp(rx_metadata)
+            # This needs to be tested further, it seems it can drift
+            # capture_timestamp = self._get_timestamp(rx_metadata)
 
             raw_capture = RawCapture(
                 iq_data_bytes=capture_buffer.tobytes(),
