@@ -13,7 +13,7 @@ from rf_shared.nats_client import NatsProducer
 from rf_survey.app import SurveyApp
 from rf_survey.config import app_settings
 from rf_survey.cli import update_settings_from_args
-from rf_survey.receiver import Receiver
+from rf_survey.mock_receiver import Receiver
 from rf_survey.models import ApplicationInfo, SweepConfig, ReceiverConfig
 from rf_survey.watchdog import ApplicationWatchdog
 from rf_survey.monitor import ZmsMonitor, NullZmsMonitor
@@ -109,7 +109,10 @@ async def run():
 
 
 def main():
-    asyncio.run(run())
+    try:
+        asyncio.run(run())
+    except asyncio.CancelledError:
+        print("rf-survey shut down successfully.")
 
 
 if __name__ == "__main__":

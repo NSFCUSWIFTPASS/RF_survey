@@ -78,7 +78,7 @@ class ZmsMonitor:
 
     async def run(self):
         self.logger.info("ZmsMonitor task starting...")
-        tasks = []
+
         try:
             # Check Zms for our monitor state and send initial heartbeat
             if not await self._initialize_state():
@@ -86,13 +86,15 @@ class ZmsMonitor:
                 self.shutdown_event.set()
                 return
 
-            event_listener_task = asyncio.create_task(self._event_listener_loop())
-            state_machine_task = asyncio.create_task(self._state_machine_loop())
-            tasks.extend([event_listener_task, state_machine_task])
-
-            await asyncio.gather(*tasks)
+            async with asyncio.TaskGroup() as monitor_tg:
+                monitor_tg.create_task(self._state_machine_loop())
+                monitor_tg.create_task(self._event_listener_loop())
 
         except asyncio.CancelledError:
+            # --- THIS IS THE CRITICAL FIX ---
+            # This block will now catch the cancellation from the parent supervisor.
+            # This allows the 'async with monitor_tg' to finish its cleanup
+            # of the child tasks gracefully.
             self.logger.info("ZmsMonitor task was cancelled.")
 
         except Exception as e:
@@ -102,12 +104,7 @@ class ZmsMonitor:
             self.shutdown_event.set()
 
         finally:
-            self.logger.info("ZmsMonitor cleaning up its sub-tasks...")
-            for task in tasks:
-                task.cancel()
-
-            if tasks:
-                await asyncio.gather(*tasks, return_exceptions=True)
+            self.logger.info("ZmsMonitor has shut down.")
 
     async def _initialize_state(self) -> bool:
         """
@@ -196,24 +193,46 @@ class ZmsMonitor:
                         )
                         time_until_ack_by = 0
 
-                try:
-                    command = await asyncio.wait_for(
-                        self._command_queue.get(), timeout=time_until_ack_by
-                    )
-                    await self._process_command(command)
+                get_command_task = asyncio.create_task(self._command_queue.get())
+                shutdown_task = asyncio.create_task(self.shutdown_event.wait())
 
-                except asyncio.TimeoutError:
+                tasks_to_wait_on = [get_command_task, shutdown_task]
+
+                done, pending = await asyncio.wait(
+                    tasks_to_wait_on,
+                    timeout=time_until_ack_by,
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+
+                for task in pending:
+                    task.cancel()
+
+                if shutdown_task in done:
+                    # The shutdown event was set. This is our highest priority signal.
+                    self.logger.info(
+                        "State machine received shutdown signal. Exiting loop."
+                    )
+                    break
+
+                elif get_command_task in done:
+                    # A command arrived in the queue.
+                    command = get_command_task.result()
+                    await self._process_command(command)
+                    # Loop back to the top to wait for the next event.
+                    continue
+
+                else:  # This block runs if 'done' is empty, which means we timed out.
                     self.logger.debug("Heartbeat interval expired. Sending heartbeat.")
                     await self._send_heartbeat()
 
-            except asyncio.CancelledError:
-                self.logger.info("State machine loop cancelled.")
-                break
             except Exception as e:
                 self.logger.error(
                     f"Error in state machine loop: {e}. Retrying in 10s.", exc_info=True
                 )
                 await asyncio.sleep(10)
+
+            finally:
+                self.logger.info("State machine loop has shut down.")
 
     async def _event_listener_loop(self):
         self.logger.info("Starting WebSocket listener...")
@@ -232,8 +251,6 @@ class ZmsMonitor:
 
             await adapter.run_async()
 
-        except asyncio.CancelledError:
-            self.logger.info("WebSocket listener task cancelled.")
         except Exception as e:
             self.logger.critical(
                 f"WebSocket listener failed critically: {e}", exc_info=True
@@ -356,9 +373,6 @@ class ZmsMonitor:
         self._last_pending_outcome = None
         self._last_pending_message = None
 
-    async def pet_watchdog(self):
-        await self._command_queue.put(PetWatchdogCommand())
-
 
 class ZmsEventAdapter(ZmsEventSubscriber):
     def __init__(
@@ -436,7 +450,4 @@ class NullZmsMonitor:
         """
         The run method does nothing but wait for the application to shut down.
         """
-        try:
-            await self.shutdown_event.wait()
-        except asyncio.CancelledError:
-            pass
+        await self.shutdown_event.wait()
