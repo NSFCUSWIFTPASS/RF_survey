@@ -86,4 +86,4 @@ class ApplicationInfo(BaseModel):
     organization: str
     coordinates: str
     output_path: Path
-    group: str = field(default_factory=lambda: str(uuid4))
+    group: str = field(default_factory=lambda: str(uuid4()))
