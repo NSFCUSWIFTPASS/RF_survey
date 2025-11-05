@@ -1,5 +1,4 @@
 import asyncio
-import signal
 from typing import Any, Dict, Optional
 from pydantic import ValidationError
 from copy import deepcopy
@@ -24,9 +23,9 @@ class SurveyApp:
 
     def __init__(
         self,
+        shutdown_event: asyncio.Event,
         app_info: ApplicationInfo,
         sweep_config: SweepConfig,
-        shutdown_event: asyncio.Event,
         receiver: Receiver,
         producer: NatsProducer,
         watchdog: ApplicationWatchdog,
@@ -34,7 +33,7 @@ class SurveyApp:
         logger: ILogger,
     ):
         self.logger = logger
-        self.shutdown_event = shutdown_event
+        self._shutdown_event = shutdown_event
 
         self.app_info = app_info
 
@@ -48,12 +47,6 @@ class SurveyApp:
         self._active_sweep_task: Optional[asyncio.Task] = None
 
         self._processing_queue = asyncio.Queue(maxsize=32)
-
-    def _signal_handler(self):
-        """Sets the shutdown event when a signal is received."""
-        if not self.shutdown_event.is_set():
-            self.logger.info("Shutdown signal received. Signalling tasks to stop.")
-            self.shutdown_event.set()
 
     async def start_survey(self):
         """Signals the survey runner to start and resumes the watchdog."""
@@ -71,54 +64,28 @@ class SurveyApp:
         """
         Initializes resources, runs the main application loop, and cleans up.
         """
-        loop = asyncio.get_running_loop()
-        survey_task = None
-        monitor_task = None
-        shutdown_waiter_task = None
-        all_tasks = []
-
         try:
             self.receiver.initialize()
             # Store for metadata creation
             self.serial = self.receiver.serial
             await self.producer.connect()
 
-            for sig in (signal.SIGINT, signal.SIGTERM):
-                loop.add_signal_handler(sig, self._signal_handler)
+            async with asyncio.TaskGroup() as tg:
+                tg.create_task(self._survey_runner())
+                tg.create_task(self._processing_worker())
+                tg.create_task(self.zms_monitor.run())
+                tg.create_task(self.watchdog.run())
 
-            survey_task = asyncio.create_task(self._survey_runner())
-            processing_task = asyncio.create_task(self._processing_worker())
-            monitor_task = asyncio.create_task(self.zms_monitor.run())
-            watchdog_task = asyncio.create_task(self.watchdog.run())
-            shutdown_waiter_task = asyncio.create_task(self.shutdown_event.wait())
-
-            all_tasks.extend(
-                [
-                    processing_task,
-                    survey_task,
-                    monitor_task,
-                    watchdog_task,
-                    shutdown_waiter_task,
-                ]
+        except asyncio.CancelledError:
+            self.logger.info(
+                "Main application task cancelled. Shutting down gracefully."
             )
-
-            await asyncio.wait(all_tasks, return_when=asyncio.FIRST_COMPLETED)
 
         except Exception as e:
             self.logger.error(f"Critical error in run loop: {e}", exc_info=True)
-            self.shutdown_event.set()
 
         finally:
             self.logger.info("Cleaning up resources...")
-
-            for task in all_tasks:
-                if task and not task.done():
-                    task.cancel()
-
-            created_tasks = [t for t in all_tasks if t is not None]
-            if created_tasks:
-                await asyncio.gather(*created_tasks, return_exceptions=True)
-
             await self.producer.close()
             self.logger.info("Shutdown complete.")
 
@@ -133,34 +100,23 @@ class SurveyApp:
         cancellation and then re-evaluate the application's state (e.g.,
         it will pause if the running event has been cleared).
         """
-        self.logger.info("Survey runner supervisor started.")
 
+        self.logger.info("Survey runner supervisor started.")
         cycles_run = 0
 
         try:
-            while not self.shutdown_event.is_set():
-                # Check if we've completed our cycles if configured
+            while True:
                 target_cycles = self.sweep_config.cycles
                 if target_cycles > 0 and cycles_run >= target_cycles:
                     self.logger.info(
-                        f"Completed {target_cycles} configured sweep cycles. Survey runner is finished."
+                        f"Completed {target_cycles} configured cycles. Finishing."
                     )
                     break
 
-                # This is the primary pausing mechanism. It will block here
-                # indefinitely if the application is paused.
+                # Primary pausing mechanisim
                 await self._running_event.wait()
 
-                # Check if a shutdown was signaled
-                if self.shutdown_event.is_set():
-                    break
-
-                # In a running state. Create the sweep as a new task
-                # and store a reference to it so it can be cancelled externally.
                 self.logger.info("Starting a new sweep task.")
-
-                # Create copies to communicate down to task the state
-                # for this task
                 receiver_config_snapshot = deepcopy(self.receiver.config)
                 sweep_config_snapshot = deepcopy(self.sweep_config)
 
@@ -169,33 +125,37 @@ class SurveyApp:
                 )
 
                 try:
-                    # This will wait until the sweep finishes its full run,
-                    # OR it will raise a CancelledError if an external
-                    # command (like a pause) cancels it.
                     await self._active_sweep_task
-                    cycles_run += 1
-
-                    self.logger.info("Sweep task completed successfully.")
 
                 except asyncio.CancelledError:
-                    self.logger.info("Sweep task was cancelled by an external command.")
+                    if self._shutdown_event.is_set():
+                        self.logger.info(
+                            "Survey runner supervisor is being cancelled; propagating cancellation."
+                        )
+                        raise
+                    else:
+                        # If the supervisor isn't being cancelled, it must have been a
+                        # cancel from a reconfigure.
+                        self.logger.info(
+                            "Active sweep was cancelled by a reconfigure command."
+                        )
+
+                else:
+                    # This runs only if the sweep completed successfully.
+                    cycles_run += 1
+                    self.logger.info("Sweep task completed successfully.")
 
                 finally:
                     self._active_sweep_task = None
 
-        except asyncio.CancelledError:
-            self.logger.info("Survey runner supervisor was cancelled.")
-
         except Exception as e:
             self.logger.critical(
-                f"A critical error occurred in the survey runner supervisor: {e}",
-                exc_info=True,
+                f"Critical error in survey runner supervisor: {e}", exc_info=True
             )
 
         finally:
             if self._active_sweep_task and not self._active_sweep_task.done():
                 self._active_sweep_task.cancel()
-
             self.logger.info("Survey runner supervisor has shut down.")
 
     async def _perform_sweep(
@@ -208,16 +168,12 @@ class SurveyApp:
         end_hz = sweep_config.end_hz
         step_hz = receiver_config.bandwidth_hz
 
-        while center_hz <= end_hz and not self.shutdown_event.is_set():
+        while center_hz <= end_hz:
             try:
                 for _ in range(sweep_config.records_per_step):
                     wait_duration = sweep_config.next_collection_wait_duration()
 
                     await self._wait_until_next_collection(wait_duration)
-
-                    # If we were shut down while waiting check again before proceeding
-                    if self.shutdown_event.is_set():
-                        break
 
                     # Get the samples from receiver
                     raw_capture = await self.receiver.receive_samples(center_hz)
@@ -248,9 +204,6 @@ class SurveyApp:
                         )
                         continue
 
-            except asyncio.CancelledError:
-                raise
-
             except Exception as e:
                 # This is a transient error for a single frequency step
                 self.logger.error(f"Failed to perform capture at {center_hz} Hz: {e}")
@@ -268,23 +221,20 @@ class SurveyApp:
         self.logger.info("Processing worker started.")
 
         try:
-            while not self.shutdown_event.is_set():
+            while True:
                 try:
                     # Get job from the queue
                     job = await asyncio.wait_for(
                         self._processing_queue.get(), timeout=1.0
                     )
-
                     # Process the job
                     await self._process_single_job(job)
 
                 except asyncio.TimeoutError:
                     continue
-                except asyncio.CancelledError:
-                    raise
 
         except asyncio.CancelledError:
-            self.logger.info("Processing worker received cancellation signal.")
+            self.logger.info("Processing worker task cancelled.")
 
         finally:
             self.logger.info(
@@ -379,15 +329,10 @@ class SurveyApp:
         await self.producer.publish(payload)
 
     async def _wait_until_next_collection(self, wait_duration: float) -> None:
-        try:
-            self.logger.info(
-                f"Waiting for {wait_duration:.4f} seconds before next collection..."
-            )
-            await asyncio.wait_for(self.shutdown_event.wait(), timeout=wait_duration)
-
-        except asyncio.TimeoutError:
-            # This is the normal, the timer finished
-            pass
+        self.logger.info(
+            f"Waiting for {wait_duration:.4f} seconds before next collection..."
+        )
+        await asyncio.sleep(wait_duration)
 
     async def _cancel_sweep_task(self):
         if self._active_sweep_task and not self._active_sweep_task.done():
@@ -410,44 +355,43 @@ class SurveyApp:
         """
         self.logger.info(f"Validating and applying ZMS reconfiguration: {params}")
 
-        if status == MonitorStatus.PAUSED:
-            await self.pause_survey()
-        else:
-            await self.start_survey()
+        # Pause active surveys until we reconfigure
+        await self.pause_survey()
 
         # Cancel current sweep task as it is no longer valid after a reconfig
         await self._cancel_sweep_task()
 
-        # No params were specified for update
-        if not params:
-            return
+        if params:
+            try:
+                validated_params = ZmsReconfigurationParams(**params)
 
-        try:
-            validated_params = ZmsReconfigurationParams(**params)
+            except ValidationError as e:
+                error_details = e.errors()
+                self.logger.error(f"ZMS parameter validation failed: {error_details}")
+                raise ValueError(f"Invalid parameters from ZMS: {error_details}") from e
 
-        except ValidationError as e:
-            error_details = e.errors()
-            self.logger.error(f"ZMS parameter validation failed: {error_details}")
-            raise ValueError(f"Invalid parameters from ZMS: {error_details}") from e
+            new_receiver_config = ReceiverConfig(
+                gain_db=validated_params.gain_db,
+                duration_sec=validated_params.duration_sec,
+                bandwidth_hz=validated_params.bandwidth_hz,
+            )
 
-        new_receiver_config = ReceiverConfig(
-            gain_db=validated_params.gain_db,
-            duration_sec=validated_params.duration_sec,
-            bandwidth_hz=validated_params.bandwidth_hz,
-        )
+            new_sweep_config = SweepConfig(
+                start_hz=validated_params.start_freq_hz,
+                end_hz=validated_params.end_freq_hz,
+                interval_sec=validated_params.sample_interval,
+                # Carry over values that are not set by ZMS
+                cycles=self.sweep_config.cycles,
+                records_per_step=self.sweep_config.records_per_step,
+                max_jitter_sec=self.sweep_config.max_jitter_sec,
+            )
 
-        new_sweep_config = SweepConfig(
-            start_hz=validated_params.start_freq_hz,
-            end_hz=validated_params.end_freq_hz,
-            interval_sec=validated_params.sample_interval,
-            # Carry over values that are not set by ZMS
-            cycles=self.sweep_config.cycles,
-            records_per_step=self.sweep_config.records_per_step,
-            max_jitter_sec=self.sweep_config.max_jitter_sec,
-        )
+            if new_receiver_config != self.receiver.config:
+                await self.receiver.reconfigure(new_receiver_config)
 
-        if new_receiver_config != self.receiver.config:
-            await self.receiver.reconfigure(new_receiver_config)
+            if new_sweep_config != self.sweep_config:
+                self.sweep_config = new_sweep_config
 
-        if new_sweep_config != self.sweep_config:
-            self.sweep_config = new_sweep_config
+        # Restart surveys if we were not told to pause
+        if status != MonitorStatus.PAUSED:
+            await self.start_survey()

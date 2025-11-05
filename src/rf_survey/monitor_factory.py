@@ -54,7 +54,6 @@ async def register_monitor_schema(
 async def initialize_zms_monitor(
     settings: AppSettings,
     reconfiguration_callback: ReconfigurationCallback,
-    shutdown_event: asyncio.Event,
 ) -> Optional[IZmsMonitor]:
     """
     This factory contains all ZMS-specific setup logic.
@@ -100,7 +99,6 @@ async def initialize_zms_monitor(
             user_id=token_info.user_id,
             zmc_client=zmc_client,
             reconfiguration_callback=reconfiguration_callback,
-            shutdown_event=shutdown_event,
             logger=Logger("heartbeat", settings.LOG_LEVEL),
         )
 
