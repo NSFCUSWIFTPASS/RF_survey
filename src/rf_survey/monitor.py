@@ -433,4 +433,4 @@ class NullZmsMonitor:
             try:
                 await asyncio.sleep(10)
             except asyncio.CancelledError:
-                pass
+                break
