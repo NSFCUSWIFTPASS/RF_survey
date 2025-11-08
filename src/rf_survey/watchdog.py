@@ -57,6 +57,8 @@ class ApplicationWatchdog:
                             f"WATCHDOG TIMEOUT: Application has not been pet in {time_since_last_pet:.2f}s "
                             f"(limit: {self.timeout_seconds:.2f}s). Initiating graceful shutdown."
                         )
+                        return
+
         except asyncio.CancelledError:
             self.logger.info("Watchdog was cancelled.")
 

@@ -75,6 +75,7 @@ class SurveyApp:
                 tg.create_task(self._processing_worker())
                 tg.create_task(self.zms_monitor.run())
                 tg.create_task(self.watchdog.run())
+                tg.create_task(self._queue_monitor())
 
         except asyncio.CancelledError:
             self.logger.info(
@@ -288,7 +289,7 @@ class SurveyApp:
         try:
             with open(file_path, "wb") as f:
                 f.write(raw_capture.iq_data_bytes)
-            self.logger.info(f"File stored as {file_path}")
+            self.logger.debug(f"File stored as {file_path}")
         except IOError as e:
             self.logger.error(
                 f"Failed to write capture file to disk: {e}", exc_info=True
@@ -396,3 +397,24 @@ class SurveyApp:
         # Restart surveys if we were not told to pause
         if status != MonitorStatus.PAUSED:
             await self.start_survey()
+
+    async def _queue_monitor(self):
+        """Periodically logs the size of the processing queue."""
+        self.logger.info("Queue monitor started.")
+        try:
+            while True:
+                await asyncio.sleep(10)
+
+                queue_size = self._processing_queue.qsize()
+
+                if queue_size > (self._processing_queue.maxsize * 0.8):
+                    self.logger.warning(
+                        f"Processing queue is getting full! Size: {queue_size}/{self._processing_queue.maxsize}"
+                    )
+                else:
+                    self.logger.info(
+                        f"Processing queue size: {queue_size}/{self._processing_queue.maxsize}"
+                    )
+
+        except asyncio.CancelledError:
+            self.logger.info("Queue monitor was cancelled and is shutting down.")
