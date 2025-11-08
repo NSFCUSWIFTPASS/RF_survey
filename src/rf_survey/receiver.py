@@ -4,10 +4,11 @@ import asyncio
 import time
 import threading
 from datetime import datetime, timezone
+from copy import deepcopy
 
 from rf_shared.interfaces import ILogger
 
-from rf_survey.models import RawCapture, ReceiverConfig
+from rf_survey.models import RawCapture, ReceiverConfig, CaptureResult
 
 
 class Receiver:
@@ -84,7 +85,7 @@ class Receiver:
 
             self.logger.info("Reconfiguration complete and lock released.")
 
-    async def receive_samples(self, center_freq_hz: int) -> RawCapture:
+    async def receive_samples(self, center_freq_hz: int) -> CaptureResult:
         """
         Asynchronously executes the blocking SDR sampling and file I/O operations
         in a separate thread to avoid blocking the main event loop.
@@ -94,13 +95,15 @@ class Receiver:
             None, self._receive_samples_blocking, center_freq_hz
         )
 
-    def _receive_samples_blocking(self, center_freq_hz: int) -> RawCapture:
+    def _receive_samples_blocking(self, center_freq_hz: int) -> CaptureResult:
         """
         Receives samples from the SDR at a specified frequency.
         """
         assert self.rx_streamer is not None, "Streamer not properly initialized"
 
         with self._hardware_lock:
+            config_at_capture = deepcopy(self.config)
+
             # Set frequency for current loop step
             self.usrp.set_rx_freq(uhd.libpyuhd.types.tune_request(center_freq_hz), 0)
 
@@ -137,10 +140,9 @@ class Receiver:
                 raise
 
             if rx_metadata.error_code != uhd.types.RXMetadataErrorCode.none:
-                # Hardware needs re-init after error like buffer overflow
-                error = rx_metadata.strerror()
-                self.initialize()
-                raise RuntimeError(f"UHD recv completed with error: {error}")
+                raise RuntimeError(
+                    f"UHD recv completed with error: {rx_metadata.strerror()}"
+                )
 
             if samples_received < samples_to_collect:
                 raise RuntimeError(
@@ -156,7 +158,11 @@ class Receiver:
                 capture_timestamp=capture_timestamp,
             )
 
-            return raw_capture
+            result = CaptureResult(
+                raw_capture=raw_capture, receiver_config=config_at_capture
+            )
+
+            return result
 
     def _get_timestamp(self, rx_metadata: uhd.types.RXMetadata) -> datetime:
         # Get timestamp from rx_metadata if possible
