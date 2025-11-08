@@ -11,6 +11,7 @@ from rf_survey.utils.scheduler import calculate_wait_time
 class SweepConfig(BaseModel):
     start_hz: int
     end_hz: int
+    step_hz: int
     cycles: int
     records_per_step: int
     interval_sec: int
@@ -44,11 +45,6 @@ class ReceiverConfig(BaseModel):
     def num_samples(self) -> int:
         return int(self.duration_sec * self.bandwidth_hz)
 
-    @property
-    def raw_sample_count(self) -> int:
-        margin = 0.2
-        return int(self.num_samples * (1 + margin))
-
 
 @dataclass
 class RawCapture:
@@ -64,6 +60,14 @@ class RawCapture:
 
     # The precise hardware timestamp of the first sample.
     capture_timestamp: datetime
+
+
+@dataclass
+class CaptureResult:
+    """A container for a raw capture and the exact config used to create it."""
+
+    raw_capture: RawCapture
+    receiver_config: ReceiverConfig
 
 
 @dataclass

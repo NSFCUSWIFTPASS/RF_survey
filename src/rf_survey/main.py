@@ -1,7 +1,3 @@
-# (c) 2022 The Regents of the University of Colorado, a body corporate. Created by Stefan Tschimben.
-# This work is licensed under the Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International License.
-# To view a copy of this license, visit http://creativecommons.org/licenses/by-nc-sa/4.0/ or send a letter to Creative Commons, PO Box 1866, Mountain View, CA 94042, USA.
-
 import asyncio
 import sys
 from pathlib import Path
@@ -32,12 +28,10 @@ async def run():
 
     loop = asyncio.get_running_loop()
     main_task = asyncio.current_task()
-    shutdown_event = asyncio.Event()
 
     def signal_handler():
         print("\nShutdown signal received. Cancelling all tasks...")
         if main_task and not main_task.done():
-            shutdown_event.set()
             main_task.cancel()
 
     for sig in (signal.SIGINT, signal.SIGTERM):
@@ -55,6 +49,7 @@ async def run():
     sweep_config = SweepConfig(
         start_hz=settings.FREQUENCY_START,
         end_hz=settings.FREQUENCY_END,
+        step_hz=settings.BANDWIDTH,
         cycles=settings.CYCLES,
         records_per_step=settings.RECORDS,
         interval_sec=settings.TIMER,
@@ -89,7 +84,6 @@ async def run():
     )
 
     app = SurveyApp(
-        shutdown_event=shutdown_event,
         app_info=app_info,
         sweep_config=sweep_config,
         receiver=receiver,

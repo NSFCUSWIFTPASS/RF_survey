@@ -5,6 +5,12 @@ from typing import Optional
 from rf_shared.interfaces import ILogger
 
 
+class WatchdogTimeoutError(Exception):
+    """Raised when the application watchdog times out."""
+
+    pass
+
+
 class ApplicationWatchdog:
     """
     A watchdog to monitor the liveness of the main application loop.
@@ -57,7 +63,7 @@ class ApplicationWatchdog:
                             f"WATCHDOG TIMEOUT: Application has not been pet in {time_since_last_pet:.2f}s "
                             f"(limit: {self.timeout_seconds:.2f}s). Initiating graceful shutdown."
                         )
-                        return
+                        raise WatchdogTimeoutError
 
         except asyncio.CancelledError:
             self.logger.info("Watchdog was cancelled.")
