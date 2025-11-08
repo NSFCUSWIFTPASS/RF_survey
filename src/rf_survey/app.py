@@ -23,7 +23,6 @@ class SurveyApp:
 
     def __init__(
         self,
-        shutdown_event: asyncio.Event,
         app_info: ApplicationInfo,
         sweep_config: SweepConfig,
         receiver: Receiver,
@@ -33,7 +32,6 @@ class SurveyApp:
         logger: ILogger,
     ):
         self.logger = logger
-        self._shutdown_event = shutdown_event
 
         self.app_info = app_info
 
@@ -44,6 +42,7 @@ class SurveyApp:
 
         self.zms_monitor = zms_monitor
         self._running_event = asyncio.Event()
+        self._reconfigure_event = asyncio.Event()
         self._active_sweep_task: Optional[asyncio.Task] = None
 
         self._processing_queue = asyncio.Queue(maxsize=32)
@@ -116,38 +115,45 @@ class SurveyApp:
 
                 # Primary pausing mechanisim
                 await self._running_event.wait()
+                # Reset reconfigure event
+                self._reconfigure_event.clear()
 
                 self.logger.debug("Starting a new sweep task.")
-                receiver_config_snapshot = deepcopy(self.receiver.config)
                 sweep_config_snapshot = deepcopy(self.sweep_config)
 
                 self._active_sweep_task = asyncio.create_task(
-                    self._perform_sweep(sweep_config_snapshot, receiver_config_snapshot)
+                    self._perform_sweep(sweep_config_snapshot)
                 )
 
                 try:
                     await self._active_sweep_task
 
-                except asyncio.CancelledError:
-                    if self._shutdown_event.is_set():
-                        self.logger.info(
-                            "Survey runner supervisor is being cancelled; propagating cancellation."
+                except RuntimeError as e:
+                    self.logger.error(f"Sweep task failed with a hardware error: {e}")
+                    self.logger.warning(
+                        "Attempting to recover by re-initializing the receiver."
+                    )
+
+                    try:
+                        await self.receiver.reconfigure(self.receiver.config)
+                        self.logger.info("Receiver re-initialized successfully.")
+                        self.logger.info("Cooling down for 3 seconds...")
+                        await asyncio.sleep(3.0)
+                    except Exception as recovery_e:
+                        self.logger.critical(
+                            f"FATAL: Failed to recover the receiver: {recovery_e}. Triggering application shutdown.",
+                            exc_info=True,
                         )
                         raise
-                    else:
-                        # If the supervisor isn't being cancelled, it must have been a
-                        # cancel from a reconfigure.
-                        self.logger.info(
-                            "Active sweep was cancelled by a reconfigure command."
-                        )
 
                 else:
-                    # This runs only if the sweep completed successfully.
                     cycles_run += 1
                     self.logger.debug("Sweep task completed successfully.")
 
-                finally:
-                    self._active_sweep_task = None
+        except asyncio.CancelledError:
+            self.logger.info(
+                "Survey runner supervisor task was cancelled. Shutting down."
+            )
 
         except Exception as e:
             self.logger.critical(
@@ -159,58 +165,54 @@ class SurveyApp:
                 self._active_sweep_task.cancel()
             self.logger.info("Survey runner supervisor has shut down.")
 
-    async def _perform_sweep(
-        self, sweep_config: SweepConfig, receiver_config: ReceiverConfig
-    ):
+    async def _perform_sweep(self, sweep_config: SweepConfig):
         """
         Performs a single sweep across the specified frequency range.
         """
         center_hz = sweep_config.start_hz
         end_hz = sweep_config.end_hz
-        step_hz = receiver_config.bandwidth_hz
+        step_hz = sweep_config.step_hz
 
         while center_hz <= end_hz:
-            try:
-                for _ in range(sweep_config.records_per_step):
-                    wait_duration = sweep_config.next_collection_wait_duration()
-
-                    await self._wait_until_next_collection(wait_duration)
-
-                    # Get the samples from receiver
-                    raw_capture = await self.receiver.receive_samples(center_hz)
-
-                    if raw_capture is None:
-                        continue
-
-                    # Create a processing job
-                    job = ProcessingJob(
-                        raw_capture=raw_capture,
-                        receiver_config_snapshot=receiver_config,
-                        sweep_config_snapshot=sweep_config,
+            for _ in range(sweep_config.records_per_step):
+                if self._reconfigure_event.is_set():
+                    self.logger.info(
+                        "Reconfigure detected pre-capture. Gracefully exiting sweep."
                     )
+                    return
 
-                    await self.watchdog.pet()
+                wait_duration = sweep_config.next_collection_wait_duration()
+                await self._wait_until_next_collection(wait_duration)
 
-                    try:
-                        # Send job to processing task
-                        await asyncio.wait_for(
-                            self._processing_queue.put(job), timeout=1.0
-                        )
-                        self.logger.debug(
-                            "Successfully queued capture job for processing."
-                        )
-                    except asyncio.TimeoutError:
-                        self.logger.error(
-                            "Processing queue is full! The system is backlogged. Dropping capture."
-                        )
-                        continue
+                if self._reconfigure_event.is_set():
+                    self.logger.info(
+                        "Reconfigure detected post-wait. Gracefully exiting sweep."
+                    )
+                    return
 
-            except Exception as e:
-                # This is a transient error for a single frequency step
-                self.logger.error(f"Failed to perform capture at {center_hz} Hz: {e}")
-                self.logger.warning(
-                    "Skipping this frequency step and continuing sweep."
+                # Get the samples from receiver
+                # The config is guaranteed to be what ever the capture was configured with
+                # due to internal locking
+                capture_result = await self.receiver.receive_samples(center_hz)
+
+                # Create a processing job
+                job = ProcessingJob(
+                    raw_capture=capture_result.raw_capture,
+                    receiver_config_snapshot=capture_result.receiver_config,
+                    sweep_config_snapshot=sweep_config,
                 )
+
+                await self.watchdog.pet()
+
+                try:
+                    # Send job to processing task
+                    await asyncio.wait_for(self._processing_queue.put(job), timeout=1.0)
+                    self.logger.debug("Successfully queued capture job for processing.")
+                except asyncio.TimeoutError:
+                    self.logger.error(
+                        "Processing queue is full! The system is backlogged. Dropping capture."
+                    )
+                    continue
 
             center_hz += step_hz
 
@@ -336,17 +338,6 @@ class SurveyApp:
         )
         await asyncio.sleep(wait_duration)
 
-    async def _cancel_sweep_task(self):
-        if self._active_sweep_task and not self._active_sweep_task.done():
-            self.logger.warning(
-                "Reconfiguration received during an active sweep. Cancelling the sweep."
-            )
-            self._active_sweep_task.cancel()
-            try:
-                await asyncio.wait_for(self._active_sweep_task, timeout=1.0)
-            except (asyncio.CancelledError, asyncio.TimeoutError):
-                pass
-
     async def apply_zms_reconfiguration(
         self, status: MonitorStatus, params: Optional[Dict[str, Any]]
     ) -> None:
@@ -355,13 +346,16 @@ class SurveyApp:
         to the sub-components. This is a callback pased to ZMS Monitor task.
         Raises ValueError on validation failure.
         """
-        self.logger.info(f"Validating and applying ZMS reconfiguration: {params}")
+        self.logger.info("Reconfiguration received.")
 
         # Pause active surveys until we reconfigure
         await self.pause_survey()
 
-        # Cancel current sweep task as it is no longer valid after a reconfig
-        await self._cancel_sweep_task()
+        self.logger.warning("Signaling active sweep to stop for reconfiguration.")
+        self._reconfigure_event.set()
+
+        if self._active_sweep_task and not self._active_sweep_task.done():
+            await self._active_sweep_task
 
         if params:
             try:
@@ -381,6 +375,7 @@ class SurveyApp:
             new_sweep_config = SweepConfig(
                 start_hz=validated_params.start_freq_hz,
                 end_hz=validated_params.end_freq_hz,
+                step_hz=validated_params.bandwidth_hz,
                 interval_sec=validated_params.sample_interval,
                 # Carry over values that are not set by ZMS
                 cycles=self.sweep_config.cycles,
@@ -388,11 +383,8 @@ class SurveyApp:
                 max_jitter_sec=self.sweep_config.max_jitter_sec,
             )
 
-            if new_receiver_config != self.receiver.config:
-                await self.receiver.reconfigure(new_receiver_config)
-
-            if new_sweep_config != self.sweep_config:
-                self.sweep_config = new_sweep_config
+            await self.receiver.reconfigure(new_receiver_config)
+            self.sweep_config = new_sweep_config
 
         # Restart surveys if we were not told to pause
         if status != MonitorStatus.PAUSED:
