@@ -137,6 +137,8 @@ class Receiver:
                 raise
 
             if rx_metadata.error_code != uhd.types.RXMetadataErrorCode.none:
+                # Hardware needs re-init after error like buffer overflow
+                self.initialize()
                 raise RuntimeError(
                     f"UHD recv completed with error: {rx_metadata.strerror()}"
                 )
