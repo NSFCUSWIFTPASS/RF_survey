@@ -346,7 +346,7 @@ class SurveyApp:
         to the sub-components. This is a callback pased to ZMS Monitor task.
         Raises ValueError on validation failure.
         """
-        self.logger.info("Reconfiguration received.")
+        self.logger.info(f"Validating and applying ZMS reconfiguration: {params}")
 
         # Pause active surveys until we reconfigure
         await self.pause_survey()
