@@ -1,11 +1,12 @@
 import asyncio
 import datetime
+import logging
 import threading
 import numpy as np
-from typing import Optional
 
 from rf_survey.models import ReceiverConfig, RawCapture, CaptureResult
-from rf_shared.interfaces import ILogger
+
+logger = logging.getLogger(__name__)
 
 
 class Receiver:
@@ -17,51 +18,43 @@ class Receiver:
     def __init__(
         self,
         receiver_config: ReceiverConfig,
-        logger: ILogger,
         **kwargs,
     ):
-        self.logger = logger
         self.config = receiver_config
         self._hardware_lock = threading.Lock()
         self.serial = "MOCK-SERIAL-123"
         self.hostname = "mock-host"  # Needed for processing step
-        self.logger.info("--- MockReceiver created ---")
-        self.logger.info(f"Initial configuration: {self.config}")
+        logger.info("--- MockReceiver created ---")
+        logger.info(f"Initial configuration: {self.config}")
 
     def initialize(self) -> None:
         """Simulates the one-time hardware initialization."""
-        self.logger.info("MockReceiver: initialize() called.")
+        logger.info("MockReceiver: initialize() called.")
 
     async def reconfigure(self, new_config: ReceiverConfig) -> None:
         """Simulates applying a new configuration."""
-        self.logger.info(
-            f"MockReceiver: reconfigure() called with new config: {new_config}"
-        )
+        logger.info(f"MockReceiver: reconfigure() called with new config: {new_config}")
         with self._hardware_lock:
-            self.logger.info("Simulating hardware hard reset delay...")
+            logger.info("Simulating hardware hard reset delay...")
             await asyncio.sleep(0.1)  # Simulate the blocking part
             self.config = new_config
-            self.logger.info("MockReceiver: Reconfiguration complete.")
+            logger.info("MockReceiver: Reconfiguration complete.")
 
     async def receive_samples(self, center_freq_hz: int) -> CaptureResult:
         """
         Simulates capturing samples for the configured duration.
         Returns a RawCapture object.
         """
-        self.logger.info(
+        logger.info(
             f"MockReceiver: receive_samples() for frequency {center_freq_hz / 1e6:.2f} MHz."
         )
         with self._hardware_lock:
             # Simulate the blocking work of a capture
             capture_duration = self.config.duration_sec
-            self.logger.debug(
-                f"Simulating a capture of {capture_duration:.3f} seconds..."
-            )
+            logger.debug(f"Simulating a capture of {capture_duration:.3f} seconds...")
             await asyncio.sleep(capture_duration)
 
-            self.logger.info(
-                "MockReceiver: Capture complete. Building RawCapture object."
-            )
+            logger.info("MockReceiver: Capture complete. Building RawCapture object.")
 
             # Create a buffer of fake data with the correct size and dtype
             mock_buffer = np.zeros(self.config.num_samples, dtype=np.int32)

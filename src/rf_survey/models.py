@@ -1,5 +1,5 @@
 import random
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from pydantic import BaseModel, Field, model_validator
 from uuid import uuid4
@@ -90,4 +90,4 @@ class ApplicationInfo(BaseModel):
     organization: str
     coordinates: str
     output_path: Path
-    group: str = field(default_factory=lambda: str(uuid4()))
+    group: str = Field(default_factory=lambda: str(uuid4()))

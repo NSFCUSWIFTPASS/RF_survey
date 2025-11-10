@@ -6,7 +6,6 @@ from zmsclient.zmc.client_asyncio import ZmsZmcClientAsyncio
 from zmsclient.identity.client_asyncio import ZmsIdentityClientAsyncio
 from zmsclient.zmc.v1.models import Error as ZmcError, Monitor, AnyObject
 from zmsclient.identity.v1.models import error as IdentityError, Token
-from rf_shared.logger import Logger
 
 from rf_survey.monitor import (
     IZmsMonitor,
@@ -99,7 +98,6 @@ async def initialize_zms_monitor(
             user_id=token_info.user_id,
             zmc_client=zmc_client,
             reconfiguration_callback=reconfiguration_callback,
-            logger=Logger("heartbeat", settings.LOG_LEVEL),
         )
 
     return None

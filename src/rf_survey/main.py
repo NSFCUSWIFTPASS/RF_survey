@@ -4,16 +4,17 @@ from pathlib import Path
 from tendo import singleton
 import signal
 
-from rf_shared.logger import Logger
+from rf_shared.logger import setup_logging
 from rf_shared.nats_client import NatsProducer
 
 from rf_survey.app import SurveyApp
 from rf_survey.config import app_settings
 from rf_survey.cli import update_settings_from_args
-from rf_survey.receiver import Receiver
+from rf_survey.mock_receiver import Receiver
 from rf_survey.models import ApplicationInfo, SweepConfig, ReceiverConfig
+from rf_survey.utils.generic_null_object import GenericNullObject
 from rf_survey.watchdog import ApplicationWatchdog
-from rf_survey.monitor import ZmsMonitor, NullZmsMonitor
+from rf_survey.monitor import ZmsMonitor
 from rf_survey.monitor_factory import initialize_zms_monitor
 
 
@@ -38,6 +39,8 @@ async def run():
         loop.add_signal_handler(sig, signal_handler)
 
     settings = update_settings_from_args(app_settings)
+
+    setup_logging(log_level=settings.LOG_LEVEL, root_logger_name="rf_survey")
 
     app_info = ApplicationInfo(
         hostname=settings.HOSTNAME,
@@ -64,7 +67,6 @@ async def run():
 
     receiver = Receiver(
         receiver_config=receiver_config,
-        logger=Logger(name="receiver", log_level=settings.LOG_LEVEL),
     )
 
     producer = NatsProducer(
@@ -75,12 +77,10 @@ async def run():
             if settings.NATS_TOKEN
             else None,
         },
-        logger=Logger(name="nats_producer", log_level=settings.LOG_LEVEL),
     )
 
     watchdog = ApplicationWatchdog(
         timeout_seconds=30,
-        logger=Logger("watchdog", settings.LOG_LEVEL),
     )
 
     app = SurveyApp(
@@ -89,8 +89,7 @@ async def run():
         receiver=receiver,
         producer=producer,
         watchdog=watchdog,
-        zms_monitor=NullZmsMonitor(),
-        logger=Logger("rf_survey", settings.LOG_LEVEL),
+        zms_monitor=GenericNullObject(),
     )
 
     # If ZMS configuration is not provided

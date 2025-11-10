@@ -1,19 +1,22 @@
 import asyncio
+import logging
 from typing import Any, Dict, Optional
 from pydantic import ValidationError
 from copy import deepcopy
 
 from rf_shared.nats_client import NatsProducer
-from rf_shared.interfaces import ILogger
 from rf_shared.checksum import get_checksum
 from rf_shared.models import MetadataRecord, Envelope
 from zmsclient.zmc.v1.models import MonitorStatus
 
+from rf_survey.metrics import Metrics
 from rf_survey.models import ReceiverConfig, SweepConfig, ApplicationInfo, ProcessingJob
 from rf_survey.monitor import IZmsMonitor
-from rf_survey.receiver import Receiver
+from rf_survey.mock_receiver import Receiver
 from rf_survey.validators import ZmsReconfigurationParams
 from rf_survey.watchdog import ApplicationWatchdog
+
+logger = logging.getLogger(__name__)
 
 
 class SurveyApp:
@@ -29,10 +32,7 @@ class SurveyApp:
         producer: NatsProducer,
         watchdog: ApplicationWatchdog,
         zms_monitor: IZmsMonitor,
-        logger: ILogger,
     ):
-        self.logger = logger
-
         self.app_info = app_info
 
         self.sweep_config = sweep_config
@@ -45,17 +45,19 @@ class SurveyApp:
         self._reconfigure_event = asyncio.Event()
         self._active_sweep_task: Optional[asyncio.Task] = None
 
+        self.metrics = Metrics()
+
         self._processing_queue = asyncio.Queue(maxsize=32)
 
     async def start_survey(self):
         """Signals the survey runner to start and resumes the watchdog."""
-        self.logger.info("Survey is being started/resumed.")
+        logger.info("Survey is being started/resumed.")
         await self.watchdog.resume()
         self._running_event.set()
 
     async def pause_survey(self):
         """Signals the survey runner to pause and pauses the watchdog."""
-        self.logger.warning("Survey is being paused.")
+        logger.warning("Survey is being paused.")
         await self.watchdog.pause()
         self._running_event.clear()
 
@@ -70,6 +72,7 @@ class SurveyApp:
             await self.producer.connect()
 
             async with asyncio.TaskGroup() as tg:
+                tg.create_task(self.metrics.run())
                 tg.create_task(self._survey_runner())
                 tg.create_task(self._processing_worker())
                 tg.create_task(self.zms_monitor.run())
@@ -77,17 +80,15 @@ class SurveyApp:
                 tg.create_task(self._queue_monitor())
 
         except asyncio.CancelledError:
-            self.logger.info(
-                "Main application task cancelled. Shutting down gracefully."
-            )
+            logger.info("Main application task cancelled. Shutting down gracefully.")
 
         except Exception as e:
-            self.logger.error(f"Critical error in run loop: {e}", exc_info=True)
+            logger.error(f"Critical error in run loop: {e}", exc_info=True)
 
         finally:
-            self.logger.info("Cleaning up resources...")
+            logger.info("Cleaning up resources...")
             await self.producer.close()
-            self.logger.info("Shutdown complete.")
+            logger.info("Shutdown complete.")
 
     async def _survey_runner(self):
         """
@@ -101,14 +102,14 @@ class SurveyApp:
         it will pause if the running event has been cleared).
         """
 
-        self.logger.info("Survey runner supervisor started.")
+        logger.info("Survey runner supervisor started.")
         cycles_run = 0
 
         try:
             while True:
                 target_cycles = self.sweep_config.cycles
                 if target_cycles > 0 and cycles_run >= target_cycles:
-                    self.logger.info(
+                    logger.info(
                         f"Completed {target_cycles} configured cycles. Finishing."
                     )
                     break
@@ -118,7 +119,7 @@ class SurveyApp:
                 # Reset reconfigure event
                 self._reconfigure_event.clear()
 
-                self.logger.debug("Starting a new sweep task.")
+                logger.debug("Starting a new sweep task.")
                 sweep_config_snapshot = deepcopy(self.sweep_config)
 
                 self._active_sweep_task = asyncio.create_task(
@@ -129,18 +130,18 @@ class SurveyApp:
                     await self._active_sweep_task
 
                 except RuntimeError as e:
-                    self.logger.error(f"Sweep task failed with a hardware error: {e}")
-                    self.logger.warning(
+                    logger.error(f"Sweep task failed with a hardware error: {e}")
+                    logger.warning(
                         "Attempting to recover by re-initializing the receiver."
                     )
 
                     try:
                         await self.receiver.reconfigure(self.receiver.config)
-                        self.logger.info("Receiver re-initialized successfully.")
-                        self.logger.info("Cooling down for 3 seconds...")
+                        logger.info("Receiver re-initialized successfully.")
+                        logger.info("Cooling down for 3 seconds...")
                         await asyncio.sleep(3.0)
                     except Exception as recovery_e:
-                        self.logger.critical(
+                        logger.critical(
                             f"FATAL: Failed to recover the receiver: {recovery_e}. Triggering application shutdown.",
                             exc_info=True,
                         )
@@ -148,22 +149,20 @@ class SurveyApp:
 
                 else:
                     cycles_run += 1
-                    self.logger.debug("Sweep task completed successfully.")
+                    logger.debug("Sweep task completed successfully.")
 
         except asyncio.CancelledError:
-            self.logger.info(
-                "Survey runner supervisor task was cancelled. Shutting down."
-            )
+            logger.info("Survey runner supervisor task was cancelled. Shutting down.")
 
         except Exception as e:
-            self.logger.critical(
+            logger.critical(
                 f"Critical error in survey runner supervisor: {e}", exc_info=True
             )
 
         finally:
             if self._active_sweep_task and not self._active_sweep_task.done():
                 self._active_sweep_task.cancel()
-            self.logger.info("Survey runner supervisor has shut down.")
+            logger.info("Survey runner supervisor has shut down.")
 
     async def _perform_sweep(self, sweep_config: SweepConfig):
         """
@@ -176,7 +175,7 @@ class SurveyApp:
         while center_hz <= end_hz:
             for _ in range(sweep_config.records_per_step):
                 if self._reconfigure_event.is_set():
-                    self.logger.info(
+                    logger.info(
                         "Reconfigure detected pre-capture. Gracefully exiting sweep."
                     )
                     return
@@ -185,7 +184,7 @@ class SurveyApp:
                 await self._wait_until_next_collection(wait_duration)
 
                 if self._reconfigure_event.is_set():
-                    self.logger.info(
+                    logger.info(
                         "Reconfigure detected post-wait. Gracefully exiting sweep."
                     )
                     return
@@ -207,9 +206,9 @@ class SurveyApp:
                 try:
                     # Send job to processing task
                     await asyncio.wait_for(self._processing_queue.put(job), timeout=1.0)
-                    self.logger.debug("Successfully queued capture job for processing.")
+                    logger.debug("Successfully queued capture job for processing.")
                 except asyncio.TimeoutError:
-                    self.logger.error(
+                    logger.error(
                         "Processing queue is full! The system is backlogged. Dropping capture."
                     )
                     continue
@@ -221,7 +220,7 @@ class SurveyApp:
         A consumer task that pulls capture jobs from a queue and
         processes them.
         """
-        self.logger.info("Processing worker started.")
+        logger.info("Processing worker started.")
 
         try:
             while True:
@@ -237,36 +236,36 @@ class SurveyApp:
                     continue
 
         except asyncio.CancelledError:
-            self.logger.info("Processing worker task cancelled.")
+            logger.info("Processing worker task cancelled.")
 
         finally:
-            self.logger.info(
+            logger.info(
                 f"Processing worker shutting down. Draining {self._processing_queue.qsize()} remaining jobs..."
             )
             # Drain the remaining jobs... Might be overkill
             while not self._processing_queue.empty():
                 job = self._processing_queue.get_nowait()
-                self.logger.info("Processing one final job before exit...")
+                logger.info("Processing one final job before exit...")
                 await self._process_single_job(job)
 
-            self.logger.info("Processing queue is empty. Worker finished.")
+            logger.info("Processing queue is empty. Worker finished.")
 
     async def _process_single_job(self, job: ProcessingJob):
         """
         Helper function to process one job.
         """
         try:
-            self.logger.debug(
+            logger.debug(
                 f"Processing job for capture at {job.raw_capture.center_freq_hz} Hz..."
             )
 
             metadata_record = await self._process_capture_job(job)
             await self.publish_metadata(metadata_record)
 
-            self.logger.debug("Processing job finished successfully.")
+            logger.debug("Processing job finished successfully.")
 
         except Exception as e:
-            self.logger.error(f"Failed to process capture job: {e}", exc_info=True)
+            logger.error(f"Failed to process capture job: {e}", exc_info=True)
 
     async def _process_capture_job(self, job: ProcessingJob) -> MetadataRecord:
         loop = asyncio.get_running_loop()
@@ -291,15 +290,13 @@ class SurveyApp:
         try:
             with open(file_path, "wb") as f:
                 f.write(raw_capture.iq_data_bytes)
-            self.logger.debug(f"File stored as {file_path}")
+            logger.debug(f"File stored as {file_path}")
         except IOError as e:
-            self.logger.error(
-                f"Failed to write capture file to disk: {e}", exc_info=True
-            )
+            logger.error(f"Failed to write capture file to disk: {e}", exc_info=True)
             raise
 
         file_checksum = get_checksum(raw_capture.iq_data_bytes)
-        self.logger.debug(f"Calculated checksum: {file_checksum}")
+        logger.debug(f"Calculated checksum: {file_checksum}")
 
         metadata_record = MetadataRecord(
             # Static application info
@@ -326,14 +323,14 @@ class SurveyApp:
         return metadata_record
 
     async def publish_metadata(self, record: MetadataRecord) -> None:
-        self.logger.info(f"Publishing metadata: {record}")
+        logger.info(f"Publishing metadata: {record}")
         envelope = Envelope.from_metadata(record)
         payload = envelope.model_dump_json().encode()
 
         await self.producer.publish(payload)
 
     async def _wait_until_next_collection(self, wait_duration: float) -> None:
-        self.logger.info(
+        logger.info(
             f"Waiting for {wait_duration:.4f} seconds before next collection..."
         )
         await asyncio.sleep(wait_duration)
@@ -346,12 +343,12 @@ class SurveyApp:
         to the sub-components. This is a callback pased to ZMS Monitor task.
         Raises ValueError on validation failure.
         """
-        self.logger.info(f"Validating and applying ZMS reconfiguration: {params}")
+        logger.info(f"Validating and applying ZMS reconfiguration: {params}")
 
         # Pause active surveys until we reconfigure
         await self.pause_survey()
 
-        self.logger.warning("Signaling active sweep to stop for reconfiguration.")
+        logger.warning("Signaling active sweep to stop for reconfiguration.")
         self._reconfigure_event.set()
 
         if self._active_sweep_task and not self._active_sweep_task.done():
@@ -363,7 +360,7 @@ class SurveyApp:
 
             except ValidationError as e:
                 error_details = e.errors()
-                self.logger.error(f"ZMS parameter validation failed: {error_details}")
+                logger.error(f"ZMS parameter validation failed: {error_details}")
                 raise ValueError(f"Invalid parameters from ZMS: {error_details}") from e
 
             new_receiver_config = ReceiverConfig(
@@ -392,7 +389,7 @@ class SurveyApp:
 
     async def _queue_monitor(self):
         """Periodically logs the size of the processing queue."""
-        self.logger.info("Queue monitor started.")
+        logger.info("Queue monitor started.")
         try:
             while True:
                 await asyncio.sleep(10)
@@ -400,13 +397,13 @@ class SurveyApp:
                 queue_size = self._processing_queue.qsize()
 
                 if queue_size > (self._processing_queue.maxsize * 0.8):
-                    self.logger.warning(
+                    logger.warning(
                         f"Processing queue is getting full! Size: {queue_size}/{self._processing_queue.maxsize}"
                     )
                 else:
-                    self.logger.info(
+                    logger.info(
                         f"Processing queue size: {queue_size}/{self._processing_queue.maxsize}"
                     )
 
         except asyncio.CancelledError:
-            self.logger.info("Queue monitor was cancelled and is shutting down.")
+            logger.info("Queue monitor was cancelled and is shutting down.")

@@ -1,8 +1,9 @@
 import asyncio
+import logging
 import time
 from typing import Optional
 
-from rf_shared.interfaces import ILogger
+logger = logging.getLogger(__name__)
 
 
 class WatchdogTimeoutError(Exception):
@@ -20,10 +21,8 @@ class ApplicationWatchdog:
     def __init__(
         self,
         timeout_seconds: Optional[float],
-        logger: ILogger,
     ):
         self.timeout_seconds = timeout_seconds
-        self.logger = logger
 
         # Internal state
         self._last_pet_time: float = time.monotonic()
@@ -36,10 +35,10 @@ class ApplicationWatchdog:
         Checks periodically if the application has recently been "pet".
         """
         if self.timeout_seconds is None or self.timeout_seconds <= 0:
-            self.logger.info("Application watchdog is disabled by configuration.")
+            logger.info("Application watchdog is disabled by configuration.")
             return
 
-        self.logger.info(
+        logger.info(
             f"Application watchdog started with a {self.timeout_seconds:.2f}s timeout."
         )
 
@@ -51,25 +50,23 @@ class ApplicationWatchdog:
 
                 async with self._lock:
                     if self._is_paused:
-                        self.logger.debug(
-                            "Watchdog is paused. Skipping liveness check."
-                        )
+                        logger.debug("Watchdog is paused. Skipping liveness check.")
                         continue
 
                     time_since_last_pet = time.monotonic() - self._last_pet_time
 
                     if time_since_last_pet > self.timeout_seconds:
-                        self.logger.critical(
+                        logger.critical(
                             f"WATCHDOG TIMEOUT: Application has not been pet in {time_since_last_pet:.2f}s "
                             f"(limit: {self.timeout_seconds:.2f}s). Initiating graceful shutdown."
                         )
                         raise WatchdogTimeoutError
 
         except asyncio.CancelledError:
-            self.logger.info("Watchdog was cancelled.")
+            logger.info("Watchdog was cancelled.")
 
         finally:
-            self.logger.info("Application watchdog is shutting down.")
+            logger.info("Application watchdog is shutting down.")
 
     async def pet(self):
         """
@@ -91,7 +88,7 @@ class ApplicationWatchdog:
 
         async with self._lock:
             if not self._is_paused:
-                self.logger.warning("Application watchdog is being PAUSED.")
+                logger.warning("Application watchdog is being PAUSED.")
                 self._is_paused = True
 
     async def resume(self):
@@ -104,6 +101,6 @@ class ApplicationWatchdog:
 
         async with self._lock:
             if self._is_paused:
-                self.logger.info("Application watchdog is being RESUMED.")
+                logger.info("Application watchdog is being RESUMED.")
                 self._is_paused = False
                 self._last_pet_time = time.monotonic()
