@@ -40,12 +40,6 @@ MONITOR_EVENT_CODES = {
 logger = logging.getLogger(__name__)
 
 
-class IZmsMonitor(Protocol):
-    async def run(self) -> None:
-        """The main execution loop for the Zms monitor."""
-        ...
-
-
 class ZmsMonitor:
     def __init__(
         self,
