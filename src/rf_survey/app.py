@@ -11,7 +11,8 @@ from zmsclient.zmc.v1.models import MonitorStatus
 
 from rf_survey.metrics import Metrics
 from rf_survey.models import ReceiverConfig, SweepConfig, ApplicationInfo, ProcessingJob
-from rf_survey.monitor import IZmsMonitor
+from rf_survey.monitor import ZmsMonitor
+from rf_survey.metrics import Metrics
 from rf_survey.mock_receiver import Receiver
 from rf_survey.validators import ZmsReconfigurationParams
 from rf_survey.watchdog import ApplicationWatchdog
@@ -31,7 +32,8 @@ class SurveyApp:
         receiver: Receiver,
         producer: NatsProducer,
         watchdog: ApplicationWatchdog,
-        zms_monitor: IZmsMonitor,
+        zms_monitor: ZmsMonitor,
+        metrics: Metrics,
     ):
         self.app_info = app_info
 
@@ -45,7 +47,7 @@ class SurveyApp:
         self._reconfigure_event = asyncio.Event()
         self._active_sweep_task: Optional[asyncio.Task] = None
 
-        self.metrics = Metrics()
+        self.metrics = metrics
 
         self._processing_queue = asyncio.Queue(maxsize=32)
 
@@ -72,12 +74,12 @@ class SurveyApp:
             await self.producer.connect()
 
             async with asyncio.TaskGroup() as tg:
-                tg.create_task(self.metrics.run())
                 tg.create_task(self._survey_runner())
                 tg.create_task(self._processing_worker())
                 tg.create_task(self.zms_monitor.run())
                 tg.create_task(self.watchdog.run())
-                tg.create_task(self._queue_monitor())
+                tg.create_task(self._health_monitor())
+                tg.create_task(self.metrics.run())
 
         except asyncio.CancelledError:
             logger.info("Main application task cancelled. Shutting down gracefully.")
@@ -383,27 +385,31 @@ class SurveyApp:
             await self.receiver.reconfigure(new_receiver_config)
             self.sweep_config = new_sweep_config
 
+            self.metrics.update_receiver_config(new_receiver_config)
+            self.metrics.update_sweep_config(new_sweep_config)
+
         # Restart surveys if we were not told to pause
         if status != MonitorStatus.PAUSED:
             await self.start_survey()
 
-    async def _queue_monitor(self):
-        """Periodically logs the size of the processing queue."""
-        logger.info("Queue monitor started.")
+    async def _health_monitor(self):
+        """
+        Periodically polls for state that changes continuously and updates metrics.
+        """
+        logger.info("Health monitor (for polling metrics) started.")
         try:
             while True:
-                await asyncio.sleep(10)
+                await asyncio.sleep(30)
+
+                # Poll for temperature
+                temp = await self.receiver.get_temperature()
+                if temp is not None:
+                    self.metrics.update_temperature(temp)
 
                 queue_size = self._processing_queue.qsize()
+                self.metrics.update_queue_size(queue_size)
 
-                if queue_size > (self._processing_queue.maxsize * 0.8):
-                    logger.warning(
-                        f"Processing queue is getting full! Size: {queue_size}/{self._processing_queue.maxsize}"
-                    )
-                else:
-                    logger.info(
-                        f"Processing queue size: {queue_size}/{self._processing_queue.maxsize}"
-                    )
+                logger.debug("Polled metrics updated (temp, queue).")
 
         except asyncio.CancelledError:
-            logger.info("Queue monitor was cancelled and is shutting down.")
+            logger.info("Health monitor was cancelled.")
