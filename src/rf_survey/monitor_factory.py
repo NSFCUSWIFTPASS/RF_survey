@@ -1,4 +1,3 @@
-import asyncio
 import json
 from typing import Optional
 
@@ -7,10 +6,8 @@ from zmsclient.identity.client_asyncio import ZmsIdentityClientAsyncio
 from zmsclient.zmc.v1.models import Error as ZmcError, Monitor, AnyObject
 from zmsclient.identity.v1.models import error as IdentityError, Token
 
-from rf_survey.monitor import (
-    IZmsMonitor,
-    ZmsMonitor,
-)
+from rf_survey.monitor import ZmsMonitor
+
 from rf_survey.config import AppSettings
 from rf_survey.types import ReconfigurationCallback
 
@@ -53,7 +50,7 @@ async def register_monitor_schema(
 async def initialize_zms_monitor(
     settings: AppSettings,
     reconfiguration_callback: ReconfigurationCallback,
-) -> Optional[IZmsMonitor]:
+) -> Optional[ZmsMonitor]:
     """
     This factory contains all ZMS-specific setup logic.
     """
