@@ -3,6 +3,7 @@ import datetime
 import logging
 import threading
 import numpy as np
+from typing import Optional
 
 from rf_survey.models import ReceiverConfig, RawCapture, CaptureResult
 
@@ -67,3 +68,6 @@ class Receiver:
             )
 
             return CaptureResult(raw_capture, self.config)
+
+    async def get_temperature(self) -> Optional[float]:
+        return 12.5
