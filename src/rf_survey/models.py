@@ -6,6 +6,7 @@ from uuid import uuid4
 from datetime import datetime
 
 from rf_survey.utils.scheduler import calculate_wait_time
+from rf_survey.__about__ import __version__ as app_version
 
 
 class SweepConfig(BaseModel):
@@ -86,6 +87,7 @@ class ApplicationInfo(BaseModel):
     Holds static information on the application runtime.
     """
 
+    version: str = app_version
     hostname: str
     organization: str
     coordinates: str
