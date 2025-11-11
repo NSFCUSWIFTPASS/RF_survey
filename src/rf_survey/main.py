@@ -7,15 +7,13 @@ import signal
 from rf_shared.logger import setup_logging
 from rf_shared.nats_client import NatsProducer
 
-from rf_survey.app import SurveyApp
+from rf_survey.app_builder import SurveyAppBuilder
 from rf_survey.config import app_settings
 from rf_survey.cli import update_settings_from_args
+from rf_survey.metrics import Metrics
 from rf_survey.mock_receiver import Receiver
 from rf_survey.models import ApplicationInfo, SweepConfig, ReceiverConfig
-from rf_survey.utils.generic_null_object import GenericNullObject
 from rf_survey.watchdog import ApplicationWatchdog
-from rf_survey.monitor import ZmsMonitor
-from rf_survey.monitor_factory import initialize_zms_monitor
 
 
 async def run():
@@ -83,30 +81,23 @@ async def run():
         timeout_seconds=30,
     )
 
-    app = SurveyApp(
+    app_builder = SurveyAppBuilder(
         app_info=app_info,
+        settings=settings,
         sweep_config=sweep_config,
         receiver=receiver,
         producer=producer,
         watchdog=watchdog,
-        zms_monitor=GenericNullObject(),
     )
 
-    # If ZMS configuration is not provided
-    # returns None
-    zms_monitor = await initialize_zms_monitor(
-        settings=settings,
-        reconfiguration_callback=app.apply_zms_reconfiguration,
-    )
+    if settings.METRICS_ENABLED:
+        metrics = Metrics(app_info=app_info)
+        app_builder.with_metrics(metrics)
 
-    ## Check if we have Zms monitor enabled
-    if zms_monitor:
-        app.zms_monitor = zms_monitor
+    if settings.zms:
+        app_builder.with_zms()
 
-    # If Zms is not managing us signal the survey to start
-    # starts paused by default, ZMS will tell us to start
-    if not isinstance(zms_monitor, ZmsMonitor):
-        await app.start_survey()
+    app = await app_builder.build()
 
     await app.run()
 
