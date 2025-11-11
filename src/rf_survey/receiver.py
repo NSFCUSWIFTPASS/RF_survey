@@ -168,7 +168,7 @@ class Receiver:
     def _get_temperature_blocking(self) -> Optional[float]:
         with self._hardware_lock:
             try:
-                temp_sensor_object = self.usrp.get_sensor_value("temp", 0)
+                temp_sensor_object = self.usrp.get_rx_sensor("temp", 0)
 
                 temp_c = temp_sensor_object.value
                 unit = temp_sensor_object.unit
@@ -176,7 +176,7 @@ class Receiver:
                 logger.debug(f"Successfully read temperature: {temp_c} {unit}")
                 return float(temp_c)
 
-            except (KeyError, RuntimeError) as e:
+            except Exception as e:
                 logger.warning(f"Could not read temperature sensor: {e}")
                 return None
 
