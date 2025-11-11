@@ -399,3 +399,9 @@ class ZmsEventAdapter(ZmsEventSubscriber):
                         "Received a MONITOR_PENDING event but its payload was not a valid "
                         f"MonitorPending object. Type was: {type(evt.object_)}"
                     )
+
+
+class NullZmsMonitor:
+    async def run(self):
+        logger.warning("Using NullZmsMonitor. ZMS is disabled.")
+        pass
