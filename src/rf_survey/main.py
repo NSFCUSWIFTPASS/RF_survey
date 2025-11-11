@@ -91,7 +91,7 @@ async def run():
     )
 
     if settings.METRICS_ENABLED:
-        metrics = Metrics(app_info=app_info)
+        metrics = Metrics(app_info=app_info, listen_port=settings.METRICS_PORT)
         app_builder.with_metrics(metrics)
 
     if settings.zms:
