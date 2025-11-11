@@ -102,4 +102,5 @@ class ApplicationWatchdog:
         async with self._lock:
             if not self._running_event.is_set():
                 logger.info("Application watchdog is being STARTED.")
+                self._running_event.set()
                 self._last_pet_time = time.monotonic()
