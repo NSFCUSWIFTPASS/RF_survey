@@ -137,3 +137,23 @@ class Metrics:
         finally:
             await runner.cleanup()
             logger.info("Metrics server shut down.")
+
+
+class NullMetrics:
+    """A non-operational metrics client that satisfies the IMetrics interface."""
+
+    def update_temperature(self, temp_c: float) -> None:
+        pass
+
+    def update_queue_size(self, size: int) -> None:
+        pass
+
+    def update_sweep_config(self, sweep_config: SweepConfig) -> None:
+        pass
+
+    def update_receiver_config(self, receiver_config: ReceiverConfig) -> None:
+        pass
+
+    async def run(self) -> None:
+        logger.warning("Using NullMetrics. Prometheus monitoring is disabled.")
+        pass
