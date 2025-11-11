@@ -9,13 +9,11 @@ from rf_shared.checksum import get_checksum
 from rf_shared.models import MetadataRecord, Envelope
 from zmsclient.zmc.v1.models import MonitorStatus
 
-from rf_survey.metrics import Metrics
 from rf_survey.models import ReceiverConfig, SweepConfig, ApplicationInfo, ProcessingJob
-from rf_survey.monitor import ZmsMonitor
-from rf_survey.metrics import Metrics
 from rf_survey.receiver import Receiver
 from rf_survey.validators import ZmsReconfigurationParams
 from rf_survey.watchdog import ApplicationWatchdog
+from rf_survey.interfaces import IZmsMonitor, IMetrics
 
 logger = logging.getLogger(__name__)
 
@@ -32,8 +30,8 @@ class SurveyApp:
         receiver: Receiver,
         producer: NatsProducer,
         watchdog: ApplicationWatchdog,
-        zms_monitor: ZmsMonitor,
-        metrics: Metrics,
+        zms_monitor: IZmsMonitor,
+        metrics: IMetrics,
     ):
         self.app_info = app_info
 
