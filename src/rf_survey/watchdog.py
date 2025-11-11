@@ -15,7 +15,7 @@ class WatchdogTimeoutError(Exception):
 class ApplicationWatchdog:
     """
     A watchdog to monitor the liveness of the main application loop.
-    Watchdog is disabled if timeot_seconds is None.
+    Watchdog is disabled if timeout_seconds is None.
     """
 
     def __init__(
@@ -26,7 +26,7 @@ class ApplicationWatchdog:
 
         # Internal state
         self._last_pet_time: float = time.monotonic()
-        self._is_paused: bool = False
+        self._running_event = asyncio.Event()
         self._lock = asyncio.Lock()
 
     async def run(self):
@@ -49,7 +49,7 @@ class ApplicationWatchdog:
                 await asyncio.sleep(check_interval_secs)
 
                 async with self._lock:
-                    if self._is_paused:
+                    if not self._running_event.is_set():
                         logger.debug("Watchdog is paused. Skipping liveness check.")
                         continue
 
@@ -87,20 +87,19 @@ class ApplicationWatchdog:
             return
 
         async with self._lock:
-            if not self._is_paused:
+            if self._running_event.is_set():
                 logger.warning("Application watchdog is being PAUSED.")
-                self._is_paused = True
+                self._running_event.clear()
 
-    async def resume(self):
+    async def start(self):
         """
-        Resumes the watchdog and resets its timer.
+        Starts the watchdog and resets its timer.
         Should be called when the application leaves a long-wait state.
         """
         if self.timeout_seconds is None:
             return
 
         async with self._lock:
-            if self._is_paused:
-                logger.info("Application watchdog is being RESUMED.")
-                self._is_paused = False
+            if not self._running_event.is_set():
+                logger.info("Application watchdog is being STARTED.")
                 self._last_pet_time = time.monotonic()

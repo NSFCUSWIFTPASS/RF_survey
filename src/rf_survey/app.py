@@ -13,7 +13,7 @@ from rf_survey.metrics import Metrics
 from rf_survey.models import ReceiverConfig, SweepConfig, ApplicationInfo, ProcessingJob
 from rf_survey.monitor import ZmsMonitor
 from rf_survey.metrics import Metrics
-from rf_survey.mock_receiver import Receiver
+from rf_survey.receiver import Receiver
 from rf_survey.validators import ZmsReconfigurationParams
 from rf_survey.watchdog import ApplicationWatchdog
 
@@ -54,7 +54,7 @@ class SurveyApp:
     async def start_survey(self):
         """Signals the survey runner to start and resumes the watchdog."""
         logger.info("Survey is being started/resumed.")
-        await self.watchdog.resume()
+        await self.watchdog.start()
         self._running_event.set()
 
     async def pause_survey(self):
