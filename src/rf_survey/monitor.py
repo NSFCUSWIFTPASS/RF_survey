@@ -5,8 +5,6 @@ from datetime import datetime, timezone
 from typing import Protocol, Optional
 from websockets.asyncio.client import ClientConnection
 
-from rf_shared.interfaces import ILogger
-
 from zmsclient.zmc.client_asyncio import ZmsZmcClientAsyncio
 from zmsclient.zmc.v1.models import (
     Subscription,
@@ -39,11 +37,7 @@ MONITOR_EVENT_CODES = {
     EVENT_CODE_MONITOR_PENDING,
 }
 
-
-class IZmsMonitor(Protocol):
-    async def run(self) -> None:
-        """The main execution loop for the Zms monitor."""
-        ...
+logger = logging.getLogger(__name__)
 
 
 class ZmsMonitor:
@@ -54,11 +48,9 @@ class ZmsMonitor:
         user_id: str,
         zmc_client: ZmsZmcClientAsyncio,
         reconfiguration_callback: ReconfigurationCallback,
-        logger: ILogger,
     ):
         self._status_queue = asyncio.Queue()
         self._command_queue = asyncio.Queue()
-        self.logger = logger
         self.zmc_client = zmc_client
         self.reconfiguration_callback = reconfiguration_callback
 
@@ -75,12 +67,12 @@ class ZmsMonitor:
         self._last_pending_message: Optional[str] = None
 
     async def run(self):
-        self.logger.info("ZmsMonitor task starting...")
+        logger.info("ZmsMonitor task starting...")
 
         try:
             # Check Zms for our monitor state and send initial heartbeat
             if not await self._initialize_state():
-                self.logger.error("Failed to initialize monitor state. Shutting down.")
+                logger.error("Failed to initialize monitor state. Shutting down.")
                 return
 
             async with asyncio.TaskGroup() as monitor_tg:
@@ -88,16 +80,16 @@ class ZmsMonitor:
                 monitor_tg.create_task(self._event_listener_loop())
 
         except asyncio.CancelledError:
-            self.logger.info("Monitor task cancelled.")
+            logger.info("Monitor task cancelled.")
 
         except Exception as e:
-            self.logger.critical(
+            logger.critical(
                 f"A critical error occurred in ZmsMonitor: {e}", exc_info=True
             )
             raise
 
         finally:
-            self.logger.info("ZmsMonitor has shut down.")
+            logger.info("ZmsMonitor has shut down.")
 
     async def _initialize_state(self) -> bool:
         """
@@ -105,28 +97,28 @@ class ZmsMonitor:
         config via (pending or state), applies that configuration, and
         sends the first heartbeat.
         """
-        self.logger.info(f"Fetching initial state for monitor {self.monitor_id}...")
+        logger.info(f"Fetching initial state for monitor {self.monitor_id}...")
         try:
             response = await self.zmc_client.get_monitor(
                 monitor_id=self.monitor_id, elaborate=True
             )
             monitor = response.parsed
             if isinstance(monitor, Error):
-                self.logger.error(f"Failed to get monitor object: {monitor.error}")
+                logger.error(f"Failed to get monitor object: {monitor.error}")
                 return False
 
             target_config = None
             pending_id_to_ack = None
 
             if monitor.pending and monitor.pending.id != monitor.state.last_pending_id:
-                self.logger.info(
+                logger.info(
                     f"Found unacknowledged pending config (ID: {monitor.pending.id}). "
                     "Using it as the target config for initialization."
                 )
                 target_config = monitor.pending
                 pending_id_to_ack = monitor.pending.id
             else:
-                self.logger.info(
+                logger.info(
                     "Using current monitor state as the target config for initialization."
                 )
                 target_config = monitor.state
@@ -136,7 +128,7 @@ class ZmsMonitor:
             target_parameters = getattr(target_config, "parameters", None)
             params_dict = target_parameters.to_dict() if target_parameters else None
 
-            self.logger.info(
+            logger.info(
                 f"Applying initial configuration. Target status: '{target_status.value}'"
             )
 
@@ -147,9 +139,7 @@ class ZmsMonitor:
 
             # Apply parameters from the target
             if target_parameters:
-                self.logger.info(
-                    f"Applied new parameters: {target_parameters.to_dict()}"
-                )
+                logger.info(f"Applied new parameters: {target_parameters.to_dict()}")
                 self._current_parameters = target_parameters
 
             # Setup the acks for the pending event
@@ -158,7 +148,7 @@ class ZmsMonitor:
                     pending_id_to_ack, 0, "Configuration applied successfully."
                 )
 
-            self.logger.info(
+            logger.info(
                 f"Sending initial heartbeat with op_status '{self._op_status.value}'."
             )
             await self._send_heartbeat()
@@ -166,7 +156,7 @@ class ZmsMonitor:
             return True
 
         except Exception as e:
-            self.logger.error(f"Failed during state initialization: {e}", exc_info=True)
+            logger.error(f"Failed during state initialization: {e}", exc_info=True)
             return False
 
     async def _state_machine_loop(self):
@@ -184,7 +174,7 @@ class ZmsMonitor:
                                 self._status_ack_by - now
                             ).total_seconds()
                         else:
-                            self.logger.warning(
+                            logger.warning(
                                 "Heartbeat deadline is in the past! Sending immediately."
                             )
                             time_until_ack_by = 0
@@ -198,25 +188,25 @@ class ZmsMonitor:
 
                 except asyncio.TimeoutError:
                     # This is the expected outcome when the heartbeat timer expires.
-                    self.logger.debug("Heartbeat interval expired. Sending heartbeat.")
+                    logger.debug("Heartbeat interval expired. Sending heartbeat.")
                     await self._send_heartbeat()
 
                 except Exception as e:
                     # Prevents a single bad command from crashing the whole monitor.
-                    self.logger.error(
+                    logger.error(
                         f"Error in state machine loop iteration: {e}. Retrying in 10s.",
                         exc_info=True,
                     )
                     await asyncio.sleep(10)
 
         except asyncio.CancelledError:
-            self.logger.info("State machine loop was cancelled.")
+            logger.info("State machine loop was cancelled.")
 
         finally:
-            self.logger.info("State machine loop has shut down.")
+            logger.info("State machine loop has shut down.")
 
     async def _event_listener_loop(self):
-        self.logger.info("Starting WebSocket listener...")
+        logger.info("Starting WebSocket listener...")
 
         try:
             filter = EventFilter(element_ids=[self.element_id], user_ids=[self.user_id])
@@ -233,28 +223,26 @@ class ZmsMonitor:
             await adapter.run_async()
 
         except asyncio.CancelledError:
-            self.logger.info("Event listener loop was cancelled.")
+            logger.info("Event listener loop was cancelled.")
 
         except Exception as e:
-            self.logger.critical(
-                f"WebSocket listener failed critically: {e}", exc_info=True
-            )
+            logger.critical(f"WebSocket listener failed critically: {e}", exc_info=True)
 
     async def _process_command(self, command: MonitorCommand):
-        self.logger.debug(f"Received COMMAND: {command}")
+        logger.debug(f"Received COMMAND: {command}")
 
         match command:
             case ProcessReconfigurationCommand(pending=pending_config):
                 target_status = getattr(pending_config, "status", None)
                 if not target_status:
-                    self.logger.error(
+                    logger.error(
                         f"Received invalid MonitorPending object with no status. Ignoring: {pending_config}"
                     )
                     return
 
                 pending_id = getattr(pending_config, "id", None)
                 if not pending_id:
-                    self.logger.error(
+                    logger.error(
                         f"Received invalid MonitorPending object with no id. Ignoring: {pending_config}"
                     )
                     return
@@ -264,7 +252,7 @@ class ZmsMonitor:
 
                 self._update_op_status_from_target(target_status)
 
-                self.logger.info(
+                logger.info(
                     f"Processing reconfiguration for MonitorPending ID {pending_id}. "
                     f"New target status: {target_status}"
                 )
@@ -274,7 +262,7 @@ class ZmsMonitor:
                     await self.reconfiguration_callback(target_status, params_dict)
 
                     if target_parameters:
-                        self.logger.info(
+                        logger.info(
                             f"Applied new parameters: {target_parameters.to_dict()}"
                         )
                         self._current_parameters = target_parameters
@@ -285,7 +273,7 @@ class ZmsMonitor:
 
                 except Exception as e:
                     # The configuration logic failed.
-                    self.logger.error(
+                    logger.error(
                         f"Failed to apply new configuration: {e}", exc_info=True
                     )
                     self._prepare_for_ack(
@@ -295,9 +283,7 @@ class ZmsMonitor:
                 await self._send_heartbeat()
 
             case _:
-                self.logger.warning(
-                    f"Received an unhandled command type: {type(command)}"
-                )
+                logger.warning(f"Received an unhandled command type: {type(command)}")
 
     async def _send_heartbeat(self):
         """Constructs and sends a heartbeat PUT request to the ZMS API."""
@@ -311,7 +297,7 @@ class ZmsMonitor:
             body.last_pending_message = self._last_pending_message
 
         try:
-            self.logger.debug(f"Sending heartbeat: {body.to_dict()}")
+            logger.debug(f"Sending heartbeat: {body.to_dict()}")
             response = await self.zmc_client.update_monitor_state_op_status(
                 monitor_id=self.monitor_id, body=body
             )
@@ -320,23 +306,21 @@ class ZmsMonitor:
                 # Successfully sent, update the next deadline
                 if state.status_ack_by:
                     self._status_ack_by = state.status_ack_by
-                    self.logger.debug(
+                    logger.debug(
                         f"Next heartbeat due by: {self._status_ack_by.isoformat()}"
                     )
                 else:
-                    self.logger.debug("No next heartbeat required by ZMS for now.")
+                    logger.debug("No next heartbeat required by ZMS for now.")
 
                 self._clear_ack_state()
 
             else:
-                self.logger.error(
+                logger.error(
                     f"Heartbeat failed. Server response: {state.error if isinstance(state, Error) else 'Unknown'}"
                 )
 
         except Exception as e:
-            self.logger.error(
-                f"Heartbeat Monitor PUT request failed: {e}", exc_info=True
-            )
+            logger.error(f"Heartbeat Monitor PUT request failed: {e}", exc_info=True)
 
     def _update_op_status_from_target(self, target_status: MonitorStatus) -> None:
         if target_status == MonitorStatus.PAUSED:
@@ -367,12 +351,11 @@ class ZmsEventAdapter(ZmsEventSubscriber):
     ):
         super().__init__(zmsclient=zmc_client, **kwargs)
         self._command_queue = command_queue
-        self.logger = logging.getLogger(__name__).getChild("ZmsEventAdapter")
         self.monitor_id = monitor_id
 
     async def on_event(self, ws: ClientConnection, evt: Event, message: bytes | str):
         if evt.header.source_type != EVENT_SOURCETYPE_ZMC:
-            self.logger.error(
+            logger.error(
                 "on_event: unexpected source type: %r (%r)",
                 evt.header.source_type,
                 message,
@@ -390,7 +373,7 @@ class ZmsEventAdapter(ZmsEventSubscriber):
             event_monitor_id = getattr(evt.object_, "monitor_id", None)
 
         if event_monitor_id is None:
-            self.logger.warning(
+            logger.warning(
                 f"Event with code {evt.header.code} "
                 "was missing the required monitor ID attribute. Ignoring."
             )
@@ -404,7 +387,7 @@ class ZmsEventAdapter(ZmsEventSubscriber):
             case EVENT_CODE_MONITOR_PENDING:
                 if isinstance(evt.object_, MonitorPending):
                     pending_config = evt.object_
-                    self.logger.info(
+                    logger.info(
                         f"Received and queueing reconfiguration command for pending ID: {pending_config.id}"
                     )
 
@@ -412,25 +395,13 @@ class ZmsEventAdapter(ZmsEventSubscriber):
                         ProcessReconfigurationCommand(pending=pending_config)
                     )
                 else:
-                    self.logger.warning(
+                    logger.warning(
                         "Received a MONITOR_PENDING event but its payload was not a valid "
                         f"MonitorPending object. Type was: {type(evt.object_)}"
                     )
 
 
 class NullZmsMonitor:
-    def __init__(self):
-        """
-        A do-nothing ZmsMonitor that satisfies the interface.
-        Used for when the rf-survey application is ran in standalone.
-        """
-
-    async def run(self) -> None:
-        """
-        The run method does nothing but wait for the application to shut down.
-        """
-        while True:
-            try:
-                await asyncio.sleep(10)
-            except asyncio.CancelledError:
-                break
+    async def run(self):
+        logger.warning("Using NullZmsMonitor. ZMS is disabled.")
+        pass
