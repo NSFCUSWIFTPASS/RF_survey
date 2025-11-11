@@ -43,7 +43,7 @@ class AppSettings(BaseSettings):
     ZMS_MONITOR_ID: Optional[str] = None
     ZMS_MONITOR_SCHEMA_PATH: Optional[str] = None
 
-    METRICS_ENABLED: bool = True
+    METRICS_ENABLED: bool = False
 
     HOSTNAME: str = Field(default_factory=socket.gethostname)
 
