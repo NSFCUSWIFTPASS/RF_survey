@@ -50,51 +50,51 @@ async def register_monitor_schema(
 async def initialize_zms_monitor(
     settings: AppSettings,
     reconfiguration_callback: ReconfigurationCallback,
-) -> Optional[ZmsMonitor]:
+) -> ZmsMonitor:
     """
     This factory contains all ZMS-specific setup logic.
     """
-    if settings.zms:
-        token_secret = settings.zms.token.get_secret_value()
+    if not settings.zms:
+        raise ZmsInitializationError(f"Zms configuration not provided")
 
-        zmc_client = ZmsZmcClientAsyncio(
-            settings.zms.zmc_http,
-            token_secret,
-            raise_on_unexpected_status=True,
+    token_secret = settings.zms.token.get_secret_value()
+
+    zmc_client = ZmsZmcClientAsyncio(
+        settings.zms.zmc_http,
+        token_secret,
+        raise_on_unexpected_status=True,
+    )
+
+    identity_client = ZmsIdentityClientAsyncio(
+        settings.zms.identity_http,
+        token_secret,
+        raise_on_unexpected_status=True,
+    )
+
+    with open(settings.zms.monitor_schema_path, "r") as f:
+        monitor_schema = json.load(f)
+
+    # Register our configurable parameters and get element_id
+    element_id = await register_monitor_schema(
+        zmc_client, settings.zms.monitor_id, monitor_schema
+    )
+
+    # Get our user ID
+    response = await identity_client.get_token_this()
+    token_info = response.parsed
+
+    if not isinstance(token_info, Token):
+        error_msg = (
+            token_info.error if isinstance(token_info, IdentityError) else "Unknown"
+        )
+        raise ZmsInitializationError(
+            f"Failed to get token info from identity service: {error_msg}"
         )
 
-        identity_client = ZmsIdentityClientAsyncio(
-            settings.zms.identity_http,
-            token_secret,
-            raise_on_unexpected_status=True,
-        )
-
-        with open(settings.zms.monitor_schema_path, "r") as f:
-            monitor_schema = json.load(f)
-
-        # Register our configurable parameters and get element_id
-        element_id = await register_monitor_schema(
-            zmc_client, settings.zms.monitor_id, monitor_schema
-        )
-
-        # Get our user ID
-        response = await identity_client.get_token_this()
-        token_info = response.parsed
-
-        if not isinstance(token_info, Token):
-            error_msg = (
-                token_info.error if isinstance(token_info, IdentityError) else "Unknown"
-            )
-            raise ZmsInitializationError(
-                f"Failed to get token info from identity service: {error_msg}"
-            )
-
-        return ZmsMonitor(
-            monitor_id=settings.zms.monitor_id,
-            element_id=element_id,
-            user_id=token_info.user_id,
-            zmc_client=zmc_client,
-            reconfiguration_callback=reconfiguration_callback,
-        )
-
-    return None
+    return ZmsMonitor(
+        monitor_id=settings.zms.monitor_id,
+        element_id=element_id,
+        user_id=token_info.user_id,
+        zmc_client=zmc_client,
+        reconfiguration_callback=reconfiguration_callback,
+    )
