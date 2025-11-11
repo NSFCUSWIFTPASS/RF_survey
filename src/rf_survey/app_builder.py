@@ -1,14 +1,11 @@
-from typing import cast
-
 from rf_shared.nats_client import NatsProducer
 
 from rf_survey.app import SurveyApp
 from rf_survey.config import AppSettings
-from rf_survey.metrics import Metrics
+from rf_survey.metrics import Metrics, NullMetrics
 from rf_survey.models import SweepConfig, ApplicationInfo
 from rf_survey.receiver import Receiver
-from rf_survey.monitor import ZmsMonitor
-from rf_survey.utils.generic_null_object import GenericNullObject
+from rf_survey.monitor import NullZmsMonitor
 from rf_survey.watchdog import ApplicationWatchdog
 from rf_survey.monitor_factory import initialize_zms_monitor
 
@@ -29,8 +26,8 @@ class SurveyAppBuilder:
         self.receiver = receiver
         self.producer = producer
         self.watchdog = watchdog
-        self.metrics = cast(Metrics, GenericNullObject())
-        self.zms_monitor = cast(ZmsMonitor, GenericNullObject())
+        self.metrics = NullMetrics()
+        self.zms_monitor = NullZmsMonitor()
         self._zms_enabled = False
 
     def with_metrics(self, metrics: Metrics) -> "SurveyAppBuilder":
@@ -61,7 +58,7 @@ class SurveyAppBuilder:
 
         # ZMS controls whether or not we are running
         # so if ZMS is disabled start up immediately
-        if isinstance(app.zms_monitor, GenericNullObject):
+        if isinstance(app.zms_monitor, NullZmsMonitor):
             await app.start_survey()
 
         return app
