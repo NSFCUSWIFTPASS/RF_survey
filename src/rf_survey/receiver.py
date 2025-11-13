@@ -44,6 +44,41 @@ class Receiver:
 
         self.serial = self.usrp.get_usrp_rx_info(0)["mboard_serial"]
 
+        # Enable by setting RF_SURVEY_ENABLE_METRICS=1 (e.g., via AWX env vars).
+        import os
+        if os.getenv("RF_SURVEY_ENABLE_METRICS", "0") == "1":
+            try:
+                from prometheus_client import start_http_server, Gauge
+                import socket
+
+                port = int(os.getenv("RF_SURVEY_METRICS_PORT", "9124"))
+                poll = float(os.getenv("RF_SURVEY_USRP_POLL_SECONDS", "10"))
+                start_http_server(port)
+
+                RX_G = Gauge("usrp_rx_temp_celsius", "USRP RX temp (C)", ["serial", "host"])
+                TX_G = Gauge("usrp_tx_temp_celsius", "USRP TX temp (C)", ["serial", "host"])
+                UP_G = Gauge("usrp_metrics_up", "USRP exporter health (1 ok, 0 error)", ["serial", "host"])
+
+                _serial, _host = self.serial, socket.gethostname()
+
+                def _usrp_temp_loop():
+                    while True:
+                        try:
+                            rx = self.usrp.get_rx_sensor("temp", 0).to_real() if "temp" in self.usrp.get_rx_sensor_names(0) else float("nan")
+                            tx = self.usrp.get_tx_sensor("temp", 0).to_real() if "temp" in self.usrp.get_tx_sensor_names(0) else float("nan")
+                            RX_G.labels(_serial, _host).set(rx)
+                            TX_G.labels(_serial, _host).set(tx)
+                            UP_G.labels(_serial, _host).set(1.0 if (rx == rx or tx == tx) else 0.0)  # NaN check
+                        except Exception:
+                            # Do not crash the survey if metrics fail
+                            UP_G.labels(_serial, _host).set(0.0)
+                        time.sleep(poll)
+
+                threading.Thread(target=_usrp_temp_loop, daemon=True).start()
+                self.logger.info(f"Started Prometheus USRP temp exporter on :{port} (poll={poll}s)")
+            except Exception as e:
+                self.logger.warning(f"Metrics exporter failed to start: {e}")
+
         if "%s" % (self.usrp.get_mboard_sensor("ref_locked", 0)) != "Ref: unlocked":
             self.logger.info("Setting clock from external source")
             self.usrp.set_clock_source("external")
