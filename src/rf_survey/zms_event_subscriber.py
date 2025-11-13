@@ -14,6 +14,8 @@ from websockets.asyncio.client import ClientConnection
 from zmsclient.zmc.v1.models import Subscription, Event, Error
 from zmsclient.zmc.client_asyncio import ZmsZmcClientAsyncio
 
+logger = logging.getLogger(__name__)
+
 
 class ZmsEventSubscriber:
     def __init__(
@@ -25,13 +27,12 @@ class ZmsEventSubscriber:
         self.zmsclient = zmsclient
         self.subscription = subscription
         self.reconnect_on_error = reconnect_on_error
-        self.logger = logging.getLogger(__name__).getChild("ZmsEventSubscriber")
 
     @asynccontextmanager
     async def _subscription_manager(self):
         subscription_id = None
         try:
-            self.logger.info("Creating ZMS subscription...")
+            logger.info("Creating ZMS subscription...")
             response = await self.zmsclient.create_subscription(body=self.subscription)
             subscription_result = response.parsed
 
@@ -42,19 +43,19 @@ class ZmsEventSubscriber:
                 )
 
             subscription_id = subscription_result.id
-            self.logger.debug(f"Created subscription with id: {subscription_id}")
+            logger.debug(f"Created subscription with id: {subscription_id}")
 
             yield subscription_id
 
         finally:
             if subscription_id:
-                self.logger.info(f"Cleaning up subscription {subscription_id}.")
+                logger.info(f"Cleaning up subscription {subscription_id}.")
                 try:
                     await self.zmsclient.delete_subscription(
                         subscription_id=subscription_id
                     )
                 except Exception as e:
-                    self.logger.error(
+                    logger.error(
                         f"Failed to delete subscription {subscription_id}: {e}"
                     )
 
@@ -68,14 +69,16 @@ class ZmsEventSubscriber:
 
         try:
             ws = await websockets.connect(ws_url, additional_headers=headers)
-            self.logger.info(f"WebSocket connected for {subscription_id}")
+            logger.info(f"WebSocket connected for {subscription_id}")
             self.on_open(ws)
 
             async for message in ws:
-                await self.on_event(ws, self._parse_event(message), message)
+                evt = self._parse_event(message)
+                if evt:
+                    await self.on_event(ws, evt, message)
 
         except asyncio.CancelledError:
-            self.logger.info(f"WebSocket listener for {subscription_id} cancelled.")
+            logger.info(f"WebSocket listener for {subscription_id} cancelled.")
             raise
 
         finally:
@@ -87,14 +90,14 @@ class ZmsEventSubscriber:
         Manages the subscription resource and the
         reconnect logic for the WebSocket connection.
         """
-        self.logger.info("ZMS Event Subscriber starting...")
+        logger.info("ZMS Event Subscriber starting...")
         try:
             while True:
                 try:
                     async with self._subscription_manager() as sub_id:
                         await self._listen_for_events(sub_id)
 
-                        self.logger.info(
+                        logger.info(
                             "WebSocket connection closed cleanly by the server."
                         )
 
@@ -103,43 +106,59 @@ class ZmsEventSubscriber:
                     ConnectionClosedError,
                     ConnectionClosedOK,
                 ) as e:
-                    self.logger.warning(
+                    logger.warning(
                         f"WebSocket connection lost: {type(e).__name__}. Preparing to reconnect."
                     )
 
                 except Exception as e:
-                    self.logger.error(
+                    logger.error(
                         f"An unexpected error occurred in the listener: {e}",
                         exc_info=True,
                     )
 
                 if not self.reconnect_on_error:
-                    self.logger.info("Reconnect is disabled. Exiting.")
+                    logger.info("Reconnect is disabled. Exiting.")
                     break
 
                 try:
-                    self.logger.info("Attempting to reconnect in 10 seconds...")
+                    logger.info("Attempting to reconnect in 10 seconds...")
                     await asyncio.sleep(10)
                 except asyncio.CancelledError:
-                    self.logger.info(
-                        "Reconnect wait was cancelled. Shutting down loop."
-                    )
+                    logger.info("Reconnect wait was cancelled. Shutting down loop.")
                     break
 
         except asyncio.CancelledError:
-            self.logger.info(
+            logger.info(
                 "Subscription task cancelled. Shutting down the reconnect loop."
             )
 
         except Exception as e:
-            self.logger.critical(
+            logger.critical(
                 f"Subscriber failed critically during setup or loop: {e}", exc_info=True
             )
         finally:
-            self.logger.info("ZMS Event Subscriber has shut down.")
+            logger.info("ZMS Event Subscriber has shut down.")
 
     def _parse_event(self, msg):
-        return Event.from_dict(src_dict=json.loads(msg))
+        logger.debug(f"Received raw message from WebSocket: {msg!r}")
+
+        if not msg:
+            logger.debug("Received an empty message, ignoring.")
+            return None
+
+        try:
+            data = json.loads(msg)
+        except json.JSONDecodeError:
+            logger.warning(f"Received a message that was not valid JSON: {msg!r}")
+            return None
+
+        if not isinstance(data, dict):
+            logger.warning(
+                f"Received valid JSON, but it was not a dictionary (was {data}). Ignoring."
+            )
+            return None
+
+        return Event.from_dict(src_dict=data)
 
     def _build_ws_url(self, id: str):
         ws_url = self.zmsclient._base_url + "/subscriptions/" + id + "/events"

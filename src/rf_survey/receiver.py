@@ -3,23 +3,22 @@ import numpy as np
 import asyncio
 import time
 import threading
+import logging
 from datetime import datetime, timezone
 from copy import deepcopy
-
-from rf_shared.interfaces import ILogger
+from typing import Optional
 
 from rf_survey.models import RawCapture, ReceiverConfig, CaptureResult
+
+logger = logging.getLogger(__name__)
 
 
 class Receiver:
     def __init__(
         self,
         receiver_config: ReceiverConfig,
-        logger: ILogger,
     ):
-        self.logger = logger
         self._hardware_lock = threading.Lock()
-
         self.config = receiver_config
 
     def initialize(self) -> None:
@@ -27,7 +26,7 @@ class Receiver:
         try:
             self._initialize_hardware()
         except (RuntimeError, KeyError) as e:
-            self.logger.error(f"Failed to initialize USRP: {type(e).__name__}: {e}")
+            logger.error(f"Failed to initialize USRP: {type(e).__name__}: {e}")
             raise
 
     def _initialize_hardware(self) -> None:
@@ -35,7 +34,7 @@ class Receiver:
         Connects to the USRP, configures all hardware parameters,
         and sets up the data stream and buffers.
         """
-        self.logger.info("Initializing USRP hardware and stream...")
+        logger.info("Initializing USRP hardware and stream...")
 
         self.usrp = uhd.usrp.MultiUSRP("num_recv_frames=1024")
         self.usrp.set_rx_rate(self.config.bandwidth_hz, 0)
@@ -80,11 +79,11 @@ class Receiver:
                 self.logger.warning(f"Metrics exporter failed to start: {e}")
 
         if "%s" % (self.usrp.get_mboard_sensor("ref_locked", 0)) != "Ref: unlocked":
-            self.logger.info("Setting clock from external source")
+            logger.info("Setting clock from external source")
             self.usrp.set_clock_source("external")
             self.usrp.set_time_source("external")
         else:
-            self.logger.info("Setting clock to host time")
+            logger.info("Setting clock to host time")
             self.usrp.set_time_now(uhd.types.TimeSpec(time.time()))
 
         st_args = uhd.usrp.StreamArgs("sc16", "sc16")
@@ -92,14 +91,14 @@ class Receiver:
         self.rx_metadata = uhd.types.RXMetadata()
         self.rx_streamer = self.usrp.get_rx_stream(st_args)
 
-        self.logger.info("USRP hardware initialization complete.")
+        logger.info("USRP hardware initialization complete.")
 
     async def reconfigure(self, new_config: ReceiverConfig) -> None:
         """
         Asynchronously triggers a thread-safe, blocking reconfiguration of the hardware.
         """
         loop = asyncio.get_running_loop()
-        self.logger.info("Scheduling hardware reconfiguration...")
+        logger.info("Scheduling hardware reconfiguration...")
 
         await loop.run_in_executor(
             None,
@@ -107,18 +106,18 @@ class Receiver:
             new_config,
         )
 
-        self.logger.info("Hardware reconfiguration has completed.")
+        logger.info("Hardware reconfiguration has completed.")
 
     def _reconfigure_blocking(self, new_config: ReceiverConfig) -> None:
         with self._hardware_lock:
-            self.logger.info("Hardware lock acquired. Applying new configuration...")
+            logger.info("Hardware lock acquired. Applying new configuration...")
 
             self.config = new_config
             self.rx_streamer = None
 
             self._initialize_hardware()
 
-            self.logger.info("Reconfiguration complete and lock released.")
+            logger.info("Reconfiguration complete and lock released.")
 
     async def receive_samples(self, center_freq_hz: int) -> CaptureResult:
         """
@@ -166,12 +165,10 @@ class Receiver:
                 )
                 recv_duration = time.monotonic() - start_recv
 
-                self.logger.info(
-                    f"recv() call returned after {recv_duration:.3f} seconds."
-                )
+                logger.info(f"recv() call returned after {recv_duration:.3f} seconds.")
 
             except RuntimeError as e:
-                self.logger.error(f"A UHD recv error occurred: {e}", exc_info=True)
+                logger.error(f"A UHD recv error occurred: {e}", exc_info=True)
                 raise
 
             if rx_metadata.error_code != uhd.types.RXMetadataErrorCode.none:
@@ -199,6 +196,25 @@ class Receiver:
 
             return result
 
+    async def get_temperature(self) -> Optional[float]:
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, self._get_temperature_blocking)
+
+    def _get_temperature_blocking(self) -> Optional[float]:
+        with self._hardware_lock:
+            try:
+                temp_sensor_object = self.usrp.get_rx_sensor("temp", 0)
+
+                temp_c = temp_sensor_object.value
+                unit = temp_sensor_object.unit
+
+                logger.debug(f"Successfully read temperature: {temp_c} {unit}")
+                return float(temp_c)
+
+            except Exception as e:
+                logger.warning(f"Could not read temperature sensor: {e}")
+                return None
+
     def _get_timestamp(self, rx_metadata: uhd.types.RXMetadata) -> datetime:
         # Get timestamp from rx_metadata if possible
         if rx_metadata.has_time_spec:
@@ -208,12 +224,12 @@ class Receiver:
             precise_timestamp = datetime.fromtimestamp(
                 ts_int + ts_frac, tz=timezone.utc
             )
-            self.logger.debug(
+            logger.debug(
                 f"Using precise hardware timestamp: {precise_timestamp.isoformat()}"
             )
         else:
             # Fallback in case the hardware/driver doesn't provide a timestamp.
-            self.logger.warning(
+            logger.warning(
                 "RX metadata did not contain a time spec. Falling back to software timestamp."
             )
             precise_timestamp = datetime.now(timezone.utc)
@@ -225,10 +241,10 @@ class Receiver:
         start_wait = time.monotonic()
         while not self.usrp.get_rx_sensor("lo_locked", 0).to_bool():
             if time.monotonic() - start_wait > max_lock_wait_sec:
-                self.logger.error(
+                logger.error(
                     f"USRP failed to lock LO at target frequency within {max_lock_wait_sec}s."
                 )
                 break
 
         lock_time = time.monotonic() - start_wait
-        self.logger.debug(f"LO locked in {lock_time * 1000:.2f} ms.")
+        logger.debug(f"LO locked in {lock_time * 1000:.2f} ms.")
