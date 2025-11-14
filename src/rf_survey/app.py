@@ -201,7 +201,7 @@ class SurveyApp:
                     sweep_config_snapshot=sweep_config,
                 )
 
-                await self.watchdog.pet()
+                await self.watchdog.pet("sdr_data_loop")
 
                 try:
                     # Send job to processing task
@@ -231,8 +231,10 @@ class SurveyApp:
                     )
                     # Process the job
                     await self._process_single_job(job)
+                    await self.watchdog.pet("app_worker_loop")
 
                 except asyncio.TimeoutError:
+                    await self.watchdog.pet("app_worker_loop")
                     continue
 
         except asyncio.CancelledError:
