@@ -47,7 +47,7 @@ class SurveyApp:
 
         self.metrics = metrics
 
-        self._processing_queue = asyncio.Queue(maxsize=32)
+        self._processing_queue = asyncio.Queue(maxsize=8)
 
     async def start_survey(self):
         """Signals the survey runner to start and resumes the watchdog."""
