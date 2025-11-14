@@ -40,6 +40,7 @@ python = "3.11"
 [tool.hatch.envs.test]
 dependencies = [
   "pytest",
+  "pytest-asyncio",
 ]
 
 [tool.hatch.envs.test.scripts]
